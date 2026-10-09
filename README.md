@@ -7,7 +7,7 @@ A narrative-first perpetual trading platform prototype. The initial experience u
 Requirements: Node.js 20.9+ and pnpm. On Windows with WSL, open Ubuntu and run:
 
 ```bash
-cd /mnt/c/Users/user/Documents/ChatGPT/Thesis
+cd ~/projects/Thesis
 pnpm install
 pnpm dev
 ```
@@ -17,6 +17,14 @@ Then open `http://localhost:3000/discover` in a Windows browser. If the repo is 
 Copy `.env.example` to `.env.local` and set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` from your Supabase project. Demo browsing works without credentials. Do not replace an existing `.env.local`; preserve the Supabase values already in it.
 
 To provision Supabase, apply `supabase/migrations/202610090001_initial_schema.sql` and `supabase/migrations/202610090002_pacifica_execution_tracking.sql` with the Supabase CLI or SQL editor. Demo narratives are deterministic application data; the database catalogue seeds canonical market metadata. Generate exact client database types after applying the schema with `npm run db:types` (Supabase CLI required).
+
+## Supabase Auth
+
+The browser uses `createBrowserClient` from `@supabase/ssr`; server routes use the cookie-backed SSR client, and middleware refreshes the session. Email signup is enabled for the configured project, and email confirmation is required.
+
+In Supabase Dashboard, open **Authentication → URL Configuration** and add `http://localhost:3000/auth/callback` to **Redirect URLs** for local development. Add the corresponding `https://<your-production-host>/auth/callback` URL for each deployed environment. Signup confirmation and password recovery both return through this callback; recovery continues at `/auth/update-password`. Keep the Site URL set to your canonical app origin; do not turn off email confirmation just to bypass the callback.
+
+User allocations, legs, executions, and ledger entries are scoped by authenticated user IDs through RLS. Public market/thesis browsing remains separate from authenticated user records. No service-role key is used in browser code.
 
 ## Vercel
 

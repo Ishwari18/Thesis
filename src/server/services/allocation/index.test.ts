@@ -21,8 +21,8 @@ describe("decimal-safe allocation preview",()=>{
   it("rejects an unsupported leverage value",()=>{
     expect(previewAllocation(theses[0],"100",4).valid).toBe(false);
   });
-  it("blocks inactive or stale market metadata",()=>{
-    const thesis={...theses[0],assets:theses[0].assets.map((asset,i)=>i===0?{...asset,metadataObservedAt:"2020-01-01T00:00:00.000Z"}:asset)};
+  it("blocks inactive demo market metadata",()=>{
+    const thesis={...theses[0],assets:theses[0].assets.map((asset,i)=>i===0?{...asset,active:false}:asset)};
     expect(previewAllocation(thesis,"100",3).valid).toBe(false);
   });
 });

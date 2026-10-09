@@ -4,24 +4,38 @@ A narrative-first perpetual trading platform prototype. The initial experience u
 
 ## Local setup
 
-Requirements: Node.js 20.9+ and pnpm.
+Requirements: Node.js 20.9+ and pnpm. On Windows with WSL, open Ubuntu and run:
 
-1. Copy `.env.example` to `.env.local` and set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` from your Supabase project. Demo browsing itself works without credentials.
-2. Install and run: `pnpm install`, `pnpm dev`.
-3. Open `http://localhost:3000/discover`.
+```bash
+cd /mnt/c/Users/user/Documents/ChatGPT/Thesis
+pnpm install
+pnpm dev
+```
 
-To provision Supabase, apply `supabase/migrations/202610090001_initial_schema.sql` with the Supabase CLI or SQL editor. Demo narratives are currently deterministic application data; the database catalogue seeds canonical market metadata. Generate exact client database types after applying schema with `npm run db:types` (Supabase CLI required). The checked-in types describe the core schema until regenerated.
+Then open `http://localhost:3000/discover` in a Windows browser. If the repo is cloned inside the Linux filesystem instead, use its Linux path (for example `~/src/Thesis`).
+
+Copy `.env.example` to `.env.local` and set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` from your Supabase project. Demo browsing works without credentials. Do not replace an existing `.env.local`; preserve the Supabase values already in it.
+
+To provision Supabase, apply `supabase/migrations/202610090001_initial_schema.sql` and `supabase/migrations/202610090002_pacifica_execution_tracking.sql` with the Supabase CLI or SQL editor. Demo narratives are deterministic application data; the database catalogue seeds canonical market metadata. Generate exact client database types after applying the schema with `npm run db:types` (Supabase CLI required).
 
 ## Vercel
 
 Import the repository into Vercel and use the default Next.js build settings. Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` as project environment variables for Preview and Production, then deploy. Configure Supabase Auth Site URL and redirect allowlist to include your local origin and the project's `*.vercel.app` URL; update these when adding a custom domain. No custom domain is required. Never put a service-role key in a `NEXT_PUBLIC_*` variable or browser bundle. No privileged key is needed by the demo.
 
+## Pacifica testnet
+
+Pacifica integration is restricted to `https://test-api.pacifica.fi`. Market data is off by default; set `PACIFICA_MARKET_DATA_ENABLED=true` to show testnet prices and metadata in the preview. The interface labels this source as Pacifica testnet. If the provider is disabled or unavailable, the preview is explicitly labeled demo-only.
+
+For the optional server-only execution route, configure `PACIFICA_ACCOUNT_ADDRESS`, `PACIFICA_PRIVATE_KEY` (Base58 owner key), and `PACIFICA_ALLOWED_SUPABASE_USER_ID` (the one Supabase user UUID authorized to use the route). Keep `PACIFICA_TESTNET_EXECUTION_ENABLED=false` by default. Never prefix these variables with `NEXT_PUBLIC_`, commit them, or paste them into logs. Execution requires an authenticated matching user and a persisted eligible allocation. The browser never receives signing credentials.
+
+The local `pacifica-kit` and its test report did not verify signed execution against Pacifica: the recorded first info request failed before receiving an HTTP response, and the signed-order scripts were not run. This implementation verifies the documented signing format locally, but no order was sent as part of this integration. The Supabase tracking migration must be applied before the execution route can work. Accepted submissions are not reported as fills; reconciliation and fill, fee, and funding ingestion remain outstanding.
+
 ## Product boundaries
 
-- Search, category filtering, sorting, narrative detail, period controls, allocation preview and per-market minimum checks run against seeded demo providers.
-- Trade actions are explicitly demo-only and never call an exchange.
+- Search, category filtering, sorting, narrative detail and period controls run against seeded demo providers.
+- The trade panel can preview Pacifica testnet market metadata and prices, but does not submit orders. The separately gated execution API requires an authenticated allowlisted user and is disabled by default.
 - The STRICT allocation engine uses decimal.js, requires weights to sum to 100%, and checks each leg against its own market minimum. It refuses ineligible legs rather than silently increasing collateral or changing weights.
-- Minimum collateral for a leg is `M / (L × w)`. Allocation preview checks demo market minima; a production adapter must fetch active status, fresh market metadata, leverage constraints, precision, fees and margin reserves before eligibility.
+- Minimum collateral for a leg is `M / (L × w)`. Live preview checks fresh testnet metadata, leverage limits, lot size and minimum notional. Fees and margin reserves are not yet modeled.
 - Per-thesis allocation legs remain isolated, including when two theses share a market. Signed position quantity is positive for long and negative for short: unrealized P&L = signed quantity × (mark − entry). Net P&L = realized P&L + unrealized P&L − fees + funding (funding is signed cashflow: positive received, negative paid).
 - Database ledger events are append-only for authenticated users. Thesis revisions preserve prior composition snapshots, and allocations retain a revision reference.
 
@@ -29,6 +43,6 @@ Import the repository into Vercel and use the default Next.js build settings. Se
 
 Run `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` to check the project.
 
-## Pacifica integration still required
+## Remaining work
 
-Implement authenticated execution, server-side market metadata and pricing providers, idempotent order submission, fill reconciliation, funding/fee ledger ingestion, safe portfolio accounting, and operational risk limits. Validate stale metadata and minimums at execution time. Keep requested order quantities distinct from exchange fills. Add production auth policies, curator provisioning, and audited thesis revision publishing before real user allocations are accepted.
+Add exchange fill reconciliation, funding and fee ledger ingestion, operational risk limits, and audited allocation updates after fills. The API currently records submission results and deliberately does not claim fills or update thesis exposure. Review the Supabase RLS policies and apply both migrations before enabling even testnet execution.

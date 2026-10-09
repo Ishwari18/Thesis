@@ -1,0 +1,11 @@
+import { z } from "zod";
+export const marketInfoSchema=z.object({symbol:z.string(),tick_size:z.string(),lot_size:z.string(),min_order_size:z.string(),max_order_size:z.string().optional(),max_leverage:z.number(),instrument_type:z.string(),base_asset:z.string().optional()}).passthrough();
+export const priceSchema=z.object({symbol:z.string(),mark:z.string(),mid:z.string().optional(),oracle:z.string().optional(),timestamp:z.number(),funding:z.string().optional(),next_funding:z.string().optional()}).passthrough();
+export const envelopeSchema=z.object({success:z.boolean(),data:z.unknown(),error:z.unknown().nullable().optional(),code:z.unknown().nullable().optional()}).passthrough();
+export type PacificaMarketInfo=z.infer<typeof marketInfoSchema>;
+export type PacificaPrice=z.infer<typeof priceSchema>;
+export type PacificaMarket= {symbol:string;exchangeId:string;active:boolean;instrumentType:string;minNotional:string;maxNotional?:string;lotSize:string;tickSize:string;maxLeverage:number;observedAt:string;source:"pacifica-testnet"};
+export type PacificaMarketQuote={symbol:string;markPrice:string;midPrice?:string;oraclePrice?:string;observedAt:string;fresh:boolean;fundingRate?:string;nextFundingRate?:string;source:"pacifica-testnet"};
+export type PacificaSnapshot={markets:PacificaMarket[];quotes:PacificaMarketQuote[];observedAt:string;source:"pacifica-testnet"};
+export type PacificaAccount={address:string;equity?:string;availableBalance?:string;marginUsed?:string;balance?:string;updatedAt?:string;source:"pacifica-testnet"};
+export type PacificaPosition={symbol:string;side:"bid"|"ask";quantity:string;direction:"long"|"short";entryPrice:string;markPrice?:string;fundingPaid?:string;isolated:boolean;liquidationPrice?:string|null;openedAt?:string;exchangeLastId?:number;source:"pacifica-testnet"};

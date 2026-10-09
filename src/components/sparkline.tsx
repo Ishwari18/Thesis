@@ -1,0 +1,2 @@
+import type { Point } from "@/lib/types";
+export function Sparkline({data,color}:{data:Point[];color:string}) { const vals=data.map(p=>p.value); const lo=Math.min(...vals), hi=Math.max(...vals); const pts=vals.map((v,i)=>`${(i/(vals.length-1))*100},${30-((v-lo)/(hi-lo||1))*25}`).join(" "); return <svg className="sparkline" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true"><polyline points={pts} fill="none" stroke={color} strokeWidth="1.7" vectorEffect="non-scaling-stroke"/></svg>; }

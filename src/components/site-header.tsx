@@ -1,0 +1,4 @@
+"use client";
+import Link from "next/link";
+import { Search, ChevronDown, Wallet } from "lucide-react";
+export function SiteHeader() { return <header className="site-header"><Link href="/discover" className="wordmark">THESIS<span className="wordmark-mark">/</span></Link><label className="global-search"><Search size={15}/><input aria-label="Search theses" placeholder="What do you want to trade?" onKeyDown={e=>{if(e.key==="Enter"){const q=(e.currentTarget as HTMLInputElement).value;location.href=`/discover?q=${encodeURIComponent(q)}`;}}}/><kbd>⌘ K</kbd></label><div className="header-right"><span className="balance"><small>PORTFOLIO</small><strong>$0.00</strong></span><Link className="wallet-button" href="/auth"><Wallet size={15}/><span>Demo mode</span><ChevronDown size={13}/></Link></div></header>; }

@@ -24,20 +24,25 @@ export function readPacificaConfig(): PacificaConfig {
     PACIFICA_PRIVATE_KEY:process.env.PACIFICA_PRIVATE_KEY,
     PACIFICA_ALLOWED_SUPABASE_USER_ID:process.env.PACIFICA_ALLOWED_SUPABASE_USER_ID,
   });
-  //if(!parsed.success) throw new PacificaConfigError("Pacifica is restricted to testnet. Set PACIFICA_NETWORK=testnet and use a valid test-api.pacifica.fi base URL.");
-  if (!parsed.success) {
-  console.error(
-    "[Pacifica config validation]",
-    parsed.error.issues.map(({ path, message }) => ({
-      path: path.join("."),
-      message,
-    }))
-  );
+  if (process.env.PACIFICA_NETWORK && process.env.PACIFICA_NETWORK !== "testnet") {
+    throw new PacificaConfigError(
+      "Pacifica is restricted to testnet. Set PACIFICA_NETWORK=testnet and use a valid test-api.pacifica.fi base URL."
+    );
+  }
 
-  throw new PacificaConfigError(
-    "Pacifica configuration is invalid. Check server logs."
-  );
-}
+  if (!parsed.success) {
+    console.error(
+      "[Pacifica config validation]",
+      parsed.error.issues.map(({ path, message }) => ({
+        path: path.join("."),
+        message,
+      }))
+    );
+
+    throw new PacificaConfigError(
+      "Pacifica configuration is invalid. Check server logs."
+    );
+  }
   
   const baseUrl=parsed.data.PACIFICA_API_BASE_URL ?? TESTNET_URL;
   if(baseUrl!==TESTNET_URL) throw new PacificaConfigError("Only https://test-api.pacifica.fi is allowed by this integration.");

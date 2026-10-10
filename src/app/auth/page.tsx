@@ -11,7 +11,7 @@ export default function PrivyLogin() {
   if (authenticated) {
     return (
       <div>
-        <p>You're signed in.</p>
+        <p>You&apos;re signed in.</p>
         <p>{user?.email?.address ?? user?.wallet?.address ?? "THESIS user"}</p>
         <button onClick={() => logout()}>Log out</button>
       </div>

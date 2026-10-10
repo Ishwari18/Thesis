@@ -1,26 +1,31 @@
-
 "use client";
 
-import { usePrivy } from "@privy-io/react-auth";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useLogin, usePrivy } from "@privy-io/react-auth";
+
+function safeNext() {
+  const next = new URLSearchParams(window.location.search).get("next");
+  return next && next.startsWith("/") && !next.startsWith("//") ? next : "/portfolio";
+}
 
 export default function PrivyLogin() {
-  const { ready, authenticated, user, login, logout } = usePrivy();
+  const router = useRouter();
+  const { ready, authenticated, user, logout } = usePrivy();
+  const { login } = useLogin({
+    onComplete: () => { router.replace(safeNext()); router.refresh(); },
+  });
 
   if (!ready) return <p>Loading...</p>;
 
   if (authenticated) {
     return (
       <div>
-        <p>You&apos;re signed in.</p>
         <p>{user?.email?.address ?? user?.wallet?.address ?? "THESIS user"}</p>
-        <button onClick={() => logout()}>Log out</button>
+        <Link href="/portfolio">Open portfolio</Link>
+        <button onClick={async () => { await logout(); router.refresh(); }}>Log out</button>
       </div>
     );
   }
-
-  return (
-    <button onClick={() => login()}>
-      Continue to THESIS
-    </button>
-  );
+  return <button onClick={() => login()}>Continue to THESIS</button>;
 }

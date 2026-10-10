@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { getAppUser, adminClient } from "@/lib/auth/server";
 import { PacificaAccountPanel } from "@/components/pacifica-account-panel";
 
 export const dynamic = "force-dynamic";
+
+
 type Allocation = { id: string; thesis_id: string; collateral: string; leverage: number; status: string; created_at: string };
 type Thesis = { id: string; name: string; slug: string };
 type Leg = { id: string; allocation_id: string; market_id: string; direction: string; entry_weight: string; target_notional: string };
@@ -24,14 +26,15 @@ type PortfolioDb = {
 const noRows = ["00000000-0000-4000-8000-000000000000"];
 
 export default async function PortfolioPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return <main className="page-shell"><div className="page-heading"><div><div className="eyebrow">YOUR ACCOUNT</div><h1>Portfolio</h1><p className="subheading">Sign in to view saved thesis allocations.</p></div></div><Link className="primary-trade portfolio-link" href="/auth">Sign in</Link></main>;
+ // const supabase = await createClient();
+  const appUser = await getAppUser();
+ // const { data: { user } } = await supabase.auth.getUser();
+  if (!appUser) return <main className="page-shell"><div className="page-heading"><div><div className="eyebrow">YOUR ACCOUNT</div><h1>Portfolio</h1><p className="subheading">Sign in to view saved thesis allocations.</p></div></div><Link className="primary-trade portfolio-link" href="/auth">Sign in</Link></main>;
 
-  const db = supabase as unknown as PortfolioDb;
+  const db = adminClient() as unknown as PortfolioDb;
   const { data: allocationRows, error } = await db.from("thesis_allocations")
     .select("id,thesis_id,collateral,leverage,status,created_at")
-    .eq("user_id", user.id).order("created_at", { ascending: false });
+    .eq("user_id", appUser.userId).order("created_at", { ascending: false });
   if (error) return <PortfolioError />;
   const allocations = allocationRows ?? [];
   const allocationIds = allocations.map(row => row.id);

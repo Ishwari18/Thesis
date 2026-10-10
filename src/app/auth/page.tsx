@@ -11,10 +11,33 @@ function safeNext() {
 
 export default function PrivyLogin() {
   const router = useRouter();
-  const { ready, authenticated, user, logout } = usePrivy();
+  //const { ready, authenticated, user, logout } = usePrivy();
+  const { ready, authenticated, user, logout, getAccessToken } = usePrivy();
   const { login } = useLogin({
-    onComplete: () => { router.replace(safeNext()); router.refresh(); },
-  });
+  onComplete: async () => {
+    const token = await getAccessToken();
+
+    if (!token) {
+      console.error("Privy did not return an access token.");
+      return;
+    }
+
+    const response = await fetch("/api/auth/privy-session", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      console.error("Could not establish the THESIS session.");
+      return;
+    }
+
+    router.replace(safeNext());
+    router.refresh();
+  },
+});
 
   if (!ready) return <p>Loading...</p>;
 

@@ -1,42 +1,314 @@
 import Decimal from "decimal.js";
 import { z } from "zod";
-import type { Thesis } from "@/lib/types";
-import type { ThesisAsset } from "@/lib/types";
-import type { PacificaMarket, PacificaMarketQuote } from "@/server/providers/pacifica/types";
+import type { Thesis, ThesisAsset } from "@/lib/types";
+import type {
+  PacificaMarket,
+  PacificaMarketQuote,
+} from "@/server/providers/pacifica/types";
 
-export const tradeInputSchema = z.object({ collateral: z.string().regex(/^\d+(\.\d{1,2})?$/), leverage: z.union([z.literal(2),z.literal(3),z.literal(5)]) });
-export type AllocationLeg = { symbol: string; direction: "long"|"short"; weight: string; targetNotional: string; minimum: string; eligible: boolean; notional?:string; quantity?:string; reason?: string };
-export type LiveAllocationContext={markets:PacificaMarket[];quotes:PacificaMarketQuote[];source:"pacifica-testnet"};
-export function previewAllocation(thesis: Pick<Thesis,"assets">|{assets:Array<Pick<ThesisAsset,"symbol"|"weight"|"direction"|"active"|"maxLeverage"|"minNotional">>}, collateralInput: string, leverageInput: number, live?:LiveAllocationContext) {
-  const parsed = tradeInputSchema.safeParse({ collateral: collateralInput, leverage: leverageInput });
-  if (!parsed.success) return { valid: false, error: "Enter a valid collateral amount and choose 2x, 3x or 5x.", legs: [] as AllocationLeg[], exposure: "0" };
-  const collateral = new Decimal(parsed.data.collateral), leverage = new Decimal(parsed.data.leverage);
-  const totalWeight = thesis.assets.reduce((sum,a)=>sum.plus(a.weight),new Decimal(0));
-  if (!totalWeight.eq(1)) return { valid:false, error:"Thesis target weights must sum to 100%.", legs:[] as AllocationLeg[], exposure:"0" };
-  const now=Date.now(),maxMetadataAge=5*60_000,maxPriceAge=30_000;
-  if(live){
-    for(const asset of thesis.assets){
-      const market=live.markets.find(m=>m.symbol===asset.symbol),quote=live.quotes.find(q=>q.symbol===asset.symbol);
-      if(!market||!market.active||now-Date.parse(market.observedAt)>maxMetadataAge)return {valid:false,error:`${asset.symbol} is not listed or its Pacifica market metadata is missing or stale.`,legs:[] as AllocationLeg[],exposure:exposureFor(collateral,leverage),source:"pacifica-testnet" as const};
-      if(parsed.data.leverage>market.maxLeverage)return {valid:false,error:`${asset.symbol} supports at most ${market.maxLeverage}x leverage on Pacifica.`,legs:[] as AllocationLeg[],exposure:exposureFor(collateral,leverage),source:"pacifica-testnet" as const};
-      if(!quote||!quote.fresh||now-Date.parse(quote.observedAt)>maxPriceAge||!new Decimal(quote.markPrice).isFinite()||new Decimal(quote.markPrice).lte(0))return {valid:false,error:`${asset.symbol} is missing a fresh Pacifica mark price.`,legs:[] as AllocationLeg[],exposure:exposureFor(collateral,leverage),source:"pacifica-testnet" as const};
-    }
-  }else{
-    const unavailable=thesis.assets.find(a=>!a.active||!a.minNotional||!Number.isFinite(a.maxLeverage)||parsed.data.leverage>a.maxLeverage);
-    if(unavailable)return {valid:false,error:`${unavailable.symbol} is inactive or does not support ${parsed.data.leverage}x leverage.`,legs:[] as AllocationLeg[],exposure:"0",source:"demo" as const};
-  }
-  const exposure = collateral.mul(leverage);
-  const legs = thesis.assets.map(a => {
-    const raw = exposure.mul(a.weight);
-    const market=live?.markets.find(m=>m.symbol===a.symbol),quote=live?.quotes.find(q=>q.symbol===a.symbol);
-    const minimum=new Decimal(market?.minNotional??a.minNotional);
-    let notional=raw.toDecimalPlaces(2,Decimal.ROUND_DOWN),quantity:string|undefined;
-    if(market&&quote){const lot=new Decimal(market.lotSize),qty=new Decimal(raw).div(quote.markPrice).div(lot).floor().mul(lot);quantity=qty.toFixed(Math.max(0,(market.lotSize.split(".")[1]??"").length));notional=qty.mul(quote.markPrice).toDecimalPlaces(2,Decimal.ROUND_DOWN);}
-    const eligible = notional.gte(minimum);
-    return { symbol:a.symbol, direction:a.direction, weight:a.weight, targetNotional:raw.toDecimalPlaces(2,Decimal.ROUND_DOWN).toFixed(2), ...(quantity?{quantity}:{}), minimum:minimum.toFixed(2), notional:notional.toFixed(2), eligible, ...(eligible?{}:{reason:`Rounded notional ${notional.toFixed(2)} is below the ${minimum.toFixed(2)} market minimum`}) };
-  });
-  const blocked = legs.some(l=>!l.eligible);
-  return { valid:!blocked, error:blocked?"One or more legs are below their market minimum after quantity rounding. Increase collateral or review the allocation.":undefined, collateral:collateral.toFixed(2), leverage:leverage.toString(), exposure:exposure.toFixed(2), legs, mode:"STRICT" as const, source:live?"pacifica-testnet" as const:"demo" as const, feeNote:"Estimated exposure excludes fees, margin reserve and execution rounding." };
+export const tradeInputSchema = z.object({
+  collateral: z.string().regex(/^\d+(\.\d{1,2})?$/),
+  leverage: z.union([z.literal(2), z.literal(3), z.literal(5)]),
+});
+
+export type AllocationLeg = {
+  symbol: string;
+  direction: "long" | "short";
+  weight: string;
+  targetNotional: string;
+  minimum: string;
+  eligible: boolean;
+  notional?: string;
+  quantity?: string;
+  reason?: string;
+};
+
+export type LiveAllocationContext = {
+  markets: PacificaMarket[];
+  quotes: PacificaMarketQuote[];
+  source: "pacifica-testnet";
+};
+
+type Asset = Pick<
+  ThesisAsset,
+  | "symbol"
+  | "weight"
+  | "direction"
+  | "active"
+  | "maxLeverage"
+  | "minNotional"
+>;
+
+function exposureFor(collateral: Decimal, leverage: Decimal) {
+  return collateral.mul(leverage).toFixed(2);
 }
-function exposureFor(collateral:Decimal,leverage:Decimal){return collateral.mul(leverage).toFixed(2);}
-export function minimumCollateral(minimum: string, leverage: number, weight: string) { return new Decimal(minimum).div(new Decimal(leverage).mul(weight)).toDecimalPlaces(2, Decimal.ROUND_UP).toFixed(2); }
+
+function freshTimestamp(
+  timestamp: string,
+  maxAgeMs: number,
+  now: number,
+): boolean {
+  const parsed = Date.parse(timestamp);
+  const age = now - parsed;
+  return Number.isFinite(parsed) && age >= 0 && age <= maxAgeMs;
+}
+
+export function previewAllocation(
+  thesis: Pick<Thesis, "assets"> | { assets: Asset[] },
+  collateralInput: string,
+  leverageInput: number,
+  live?: LiveAllocationContext,
+) {
+  const parsed = tradeInputSchema.safeParse({
+    collateral: collateralInput,
+    leverage: leverageInput,
+  });
+
+  if (!parsed.success) {
+    return {
+      valid: false,
+      error: "Enter a valid collateral amount and choose 2x, 3x or 5x.",
+      legs: [] as AllocationLeg[],
+      exposure: "0.00",
+    };
+  }
+
+  const collateral = new Decimal(parsed.data.collateral);
+  const leverage = new Decimal(parsed.data.leverage);
+  const exposure = collateral.mul(leverage);
+  const exposureText = exposure.toFixed(2);
+
+  const totalWeight = thesis.assets.reduce(
+    (sum, asset) => sum.plus(asset.weight),
+    new Decimal(0),
+  );
+
+  if (
+    thesis.assets.length === 0 ||
+    !totalWeight.isFinite() ||
+    !totalWeight.eq(1)
+  ) {
+    return {
+      valid: false,
+      error: "Thesis target weights must sum to 100%.",
+      legs: [] as AllocationLeg[],
+      exposure: exposureText,
+    };
+  }
+
+  const now = Date.now();
+  const maxMetadataAge = 5 * 60_000;
+  const maxPriceAge = 30_000;
+
+  const legs: AllocationLeg[] = thesis.assets.map((asset) => {
+    const raw = exposure.mul(asset.weight);
+    const targetNotional = raw.toDecimalPlaces(
+      2,
+      Decimal.ROUND_DOWN,
+    ).toFixed(2);
+
+    const market = live?.markets.find(
+      (item) => item.symbol === asset.symbol,
+    );
+    const quote = live?.quotes.find(
+      (item) => item.symbol === asset.symbol,
+    );
+
+    const minimumValue = market?.minNotional || asset.minNotional || "0";
+
+    const base = {
+      symbol: asset.symbol,
+      direction: asset.direction,
+      weight: asset.weight,
+      targetNotional,
+      minimum: new Decimal(minimumValue).toFixed(2),
+    };
+
+    if (!asset.active) {
+      return {
+        ...base,
+        eligible: false,
+        reason: "This constituent is inactive in the thesis.",
+      };
+    }
+
+    if (!live) {
+      if (
+        !Number.isFinite(asset.maxLeverage) ||
+        parsed.data.leverage > asset.maxLeverage
+      ) {
+        return {
+          ...base,
+          eligible: false,
+          reason: `Configured leverage limit is below ${parsed.data.leverage}x.`,
+        };
+      }
+
+      if (!asset.minNotional) {
+        return {
+          ...base,
+          eligible: false,
+          reason: "Market minimum is unknown; live market data is required.",
+        };
+      }
+
+      const eligible = raw.gte(base.minimum);
+
+      return {
+        ...base,
+        notional: targetNotional,
+        eligible,
+        ...(!eligible
+          ? { reason: `Target notional is below the $${base.minimum} minimum.` }
+          : {}),
+      };
+    }
+
+    if (!market) {
+      return {
+        ...base,
+        eligible: false,
+        reason: "Market is not returned by Pacifica.",
+      };
+    }
+
+    if (!market.active) {
+      return {
+        ...base,
+        eligible: false,
+        reason: "Pacifica reports this market as inactive.",
+      };
+    }
+
+    if (
+      !freshTimestamp(market.observedAt, maxMetadataAge, now)
+    ) {
+      return {
+        ...base,
+        eligible: false,
+        reason: "Pacifica market metadata is stale or has an invalid timestamp.",
+      };
+    }
+
+    if (parsed.data.leverage > market.maxLeverage) {
+      return {
+        ...base,
+        eligible: false,
+        reason: `Pacifica supports at most ${market.maxLeverage}x leverage.`,
+      };
+    }
+
+    if (!quote) {
+      return {
+        ...base,
+        eligible: false,
+        reason: "No Pacifica price quote is available.",
+      };
+    }
+
+    if (!quote.fresh || !freshTimestamp(quote.observedAt, maxPriceAge, now)) {
+      return {
+        ...base,
+        eligible: false,
+        reason: "Pacifica price quote is stale or has an invalid timestamp.",
+      };
+    }
+
+    let markPrice: Decimal;
+
+    try {
+      markPrice = new Decimal(quote.markPrice);
+    } catch {
+      return {
+        ...base,
+        eligible: false,
+        reason: "Pacifica returned an invalid mark price.",
+      };
+    }
+
+    if (!markPrice.isFinite() || markPrice.lte(0)) {
+      return {
+        ...base,
+        eligible: false,
+        reason: "Pacifica returned an invalid mark price.",
+      };
+    }
+
+    let lot: Decimal;
+
+    try {
+      lot = new Decimal(market.lotSize);
+    } catch {
+      return {
+        ...base,
+        eligible: false,
+        reason: "Pacifica returned an invalid lot size.",
+      };
+    }
+
+    if (!lot.isFinite() || lot.lte(0)) {
+      return {
+        ...base,
+        eligible: false,
+        reason: "Pacifica returned an invalid lot size.",
+      };
+    }
+
+    const quantity = raw.div(markPrice).div(lot)
+      .floor()
+      .mul(lot);
+
+    const quantityPrecision = Math.max(
+      0,
+      (market.lotSize.split(".")[1] ?? "").length,
+    );
+
+    const quantityText = quantity.toFixed(quantityPrecision);
+    const notional = quantity.mul(markPrice).toDecimalPlaces(
+      2,
+      Decimal.ROUND_DOWN,
+    );
+    const eligible = notional.gte(base.minimum) && quantity.gt(0);
+
+    return {
+      ...base,
+      quantity: quantityText,
+      notional: notional.toFixed(2),
+      eligible,
+      ...(!eligible
+        ? {
+            reason: `Executable notional $${notional.toFixed(2)} is below the $${base.minimum} minimum after lot rounding.`,
+          }
+        : {}),
+    };
+  });
+
+  const blocked = legs.filter((leg) => !leg.eligible);
+
+  return {
+    valid: blocked.length === 0,
+    error:
+      blocked.length > 0
+        ? `${blocked.length} of ${legs.length} legs cannot be traded. Review the warnings below.`
+        : undefined,
+    collateral: collateral.toFixed(2),
+    leverage: leverage.toString(),
+    exposure: exposureText,
+    legs,
+    mode: "STRICT" as const,
+    source: live ? ("pacifica-testnet" as const) : ("demo" as const),
+    feeNote:
+      "Estimated exposure excludes fees, margin reserve and execution rounding.",
+  };
+}
+
+export function minimumCollateral(
+  minimum: string,
+  leverage: number,
+  weight: string,
+) {
+  return new Decimal(minimum)
+    .div(new Decimal(leverage).mul(weight))
+    .toDecimalPlaces(2, Decimal.ROUND_UP)
+    .toFixed(2);
+}

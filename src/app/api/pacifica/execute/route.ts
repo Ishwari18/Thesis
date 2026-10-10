@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { previewAllocation } from "@/server/services/allocation";
 import { fetchPacificaSnapshot } from "@/server/providers/pacifica/market-data";
 import { requireExecutionConfig, readPacificaConfig } from "@/server/providers/pacifica/config";
@@ -28,6 +29,8 @@ export async function POST(request:Request){
   try{config=requireExecutionConfig(readPacificaConfig());loadPacificaSigningIdentity(config.privateKey,config.accountAddress);}
   catch(error){return NextResponse.json({error:safePacificaMessage(error)},{status:503});}
   if(user.id!==config.allowedUserId)return NextResponse.json({error:"Testnet execution is restricted to the configured single Supabase user."},{status:403});
+  let resultWriter;
+  try{resultWriter=createAdminClient();}catch{return NextResponse.json({error:"Trusted execution-result storage is not configured."},{status:503});}
   const parsed=inputSchema.safeParse(await request.json().catch(()=>null));
   if(!parsed.success)return NextResponse.json({error:"Provide an allocation ID and a UUID idempotency key."},{status:400});
   const {allocationId,idempotencyKey}=parsed.data;
@@ -58,12 +61,12 @@ export async function POST(request:Request){
   const intent=intentSchema.safeParse(intentRaw);if(!intent.success)return NextResponse.json({error:"Execution intent response was invalid. Reconcile the saved allocation before retrying."},{status:202});
   if(intent.data.existing)return NextResponse.json({batchId:intent.data.batch_id,status:intent.data.status,filled:false,message:"This request key was already used. No duplicate order was sent."},{status:200});
 
-  const record=async(status:"submitted"|"partial"|"rejected"|"submission_unknown",results:{client_order_id:string;status:"submitted"|"rejected";external_id:string|null}[]=[],providerError:string|null=null)=>supabase.rpc("record_pacifica_execution_results",{p_batch_id:intent.data.batch_id,p_status:status,p_provider_error:providerError,p_results:results});
+  const record=async(status:"submitted"|"partial"|"rejected"|"submission_unknown",results:{client_order_id:string;status:"submitted"|"rejected";external_id:string|null}[]=[],providerError:string|null=null)=>resultWriter.rpc("record_pacifica_execution_results",{p_batch_id:intent.data.batch_id,p_user_id:user.id,p_status:status,p_provider_error:providerError,p_results:results});
   try{for(const order of orders)await setPacificaLeverage(order.symbol,Number(allocationRow.leverage));}
-  catch(error){await record("rejected",orders.map(o=>({client_order_id:o.clientOrderId,status:"rejected" as const,external_id:null})),safePacificaMessage(error));return NextResponse.json({batchId:intent.data.batch_id,status:"rejected",filled:false,error:safePacificaMessage(error)},{status:422});}
+  catch(error){const {error:recordError}=await record("rejected",orders.map(o=>({client_order_id:o.clientOrderId,status:"rejected" as const,external_id:null})),safePacificaMessage(error));return NextResponse.json({batchId:intent.data.batch_id,status:"rejected",filled:false,error:safePacificaMessage(error),...(recordError?{reconciliationRequired:true}: {})},{status:recordError?202:422});}
   let results:Awaited<ReturnType<typeof submitPacificaMarketBatch>>;
   try{results=await submitPacificaMarketBatch(orders.map(o=>({symbol:o.symbol,side:o.side,quantity:o.quantity!,clientOrderId:o.clientOrderId,slippagePercent:"1",reduceOnly:false})));}
-  catch(error){const message=safePacificaMessage(error);await record("submission_unknown",[],message);return NextResponse.json({batchId:intent.data.batch_id,status:"submission_unknown",filled:false,error:"Pacifica submission outcome is unknown. Do not retry; reconcile the testnet account first."},{status:202});}
+  catch(error){const message=safePacificaMessage(error);const {error:recordError}=await record("submission_unknown",[],message);return NextResponse.json({batchId:intent.data.batch_id,status:"submission_unknown",filled:false,reconciliationRequired:Boolean(recordError),error:"Pacifica submission outcome is unknown. Do not retry; reconcile the testnet account first."},{status:202});}
   const normalized=results.map((result,i)=>({client_order_id:orders[i].clientOrderId,status:result.status==="accepted"?"submitted" as const:"rejected" as const,external_id:result.externalId??null}));
   const successes=results.filter(r=>r.status==="accepted").length,status=successes===results.length?"submitted":successes===0?"rejected":"partial";
   const {error:recordError}=await record(status,normalized,successes===results.length?null:"One or more Pacifica batch actions were rejected.");

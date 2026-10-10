@@ -1,2 +1,26 @@
-import { AuthForm } from "@/components/auth-form";
-export default function AuthPage() { return <main className="page-shell auth-shell"><div className="auth-copy"><div className="eyebrow">YOUR IDEAS, YOUR ACCOUNT</div><h1>Welcome to THESIS</h1><p>Sign in to manage your personal thesis allocations when account features are enabled. Demo browsing is available without an account.</p></div><AuthForm/></main>; }
+
+"use client";
+
+import { usePrivy } from "@privy-io/react-auth";
+
+export default function PrivyLogin() {
+  const { ready, authenticated, user, login, logout } = usePrivy();
+
+  if (!ready) return <p>Loading...</p>;
+
+  if (authenticated) {
+    return (
+      <div>
+        <p>You're signed in.</p>
+        <p>{user?.email?.address ?? user?.wallet?.address ?? "THESIS user"}</p>
+        <button onClick={() => logout()}>Log out</button>
+      </div>
+    );
+  }
+
+  return (
+    <button onClick={() => login()}>
+      Continue to THESIS
+    </button>
+  );
+}

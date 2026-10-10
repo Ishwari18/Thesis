@@ -12,6 +12,7 @@
     "db:types": "supabase gen types typescript --local > src/lib/supabase/database.types.ts"
   },
   "dependencies": {
+    "@privy-io/react-auth": "^3.48.1",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.57.0",
     "bs58": "^5.0.0",

@@ -1,34 +1,187 @@
 "use client";
-import { useEffect, useState } from "react";
+
+import { useState } from "react";
+
+type Position = {
+  symbol: string;
+  direction: "long" | "short";
+  quantity: string;
+  entryPrice: string;
+  liquidationPrice?: string | null;
+  fundingPaid?: string;
+};
 
 type AccountPayload = {
   source: "pacifica-testnet";
-  account: { equity?: string; availableBalance?: string; marginUsed?: string };
-  positions: Array<{ symbol: string; direction: "long" | "short"; quantity: string; entryPrice: string }>;
+  account: {
+    address?: string;
+    equity?: string;
+    availableBalance?: string;
+    marginUsed?: string;
+    balance?: string;
+    updatedAt?: string;
+  };
+  positions: Position[];
 };
+
+function formatUsd(value?: string | null) {
+  if (value == null || !Number.isFinite(Number(value))) return "—";
+
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 4,
+  }).format(Number(value));
+}
+
 export function PacificaAccountPanel() {
   const [payload, setPayload] = useState<AccountPayload | null>(null);
-  const [state, setState] = useState<"loading" | "ready" | "unavailable">("loading");
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/pacifica/account", { cache: "no-store" })
-      .then(async response => {
-        const data = await response.json() as AccountPayload;
-        if (!response.ok) throw new Error("unavailable");
-        if (!cancelled) { setPayload(data); setState("ready"); }
-      })
-      .catch(() => { if (!cancelled) setState("unavailable"); });
-    return () => { cancelled = true; };
-  }, []);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [fetchedAt, setFetchedAt] = useState<string | null>(null);
 
-  return <section className="pacifica-account-card">
-    <div className="portfolio-card-head"><div><div className="eyebrow">PACIFICA TESTNET</div><h2>Exchange account</h2></div><span className="portfolio-status">{state === "loading" ? "Loading" : state === "ready" ? "Connected" : "Unavailable"}</span></div>
-    {state === "loading" && <p className="portfolio-note">Reading the configured testnet account.</p>}
-    {state === "unavailable" && <p className="portfolio-note">Account data is unavailable for this signed-in user or is not configured.</p>}
-    {payload && <>
-      <div className="portfolio-metrics"><span>Equity <strong>{payload.account.equity ?? "—"}</strong></span><span>Available <strong>{payload.account.availableBalance ?? "—"}</strong></span><span>Margin used <strong>{payload.account.marginUsed ?? "—"}</strong></span></div>
-      <div className="portfolio-legs">{payload.positions.length ? payload.positions.map(position => <div className="portfolio-leg" key={position.symbol}><span>{position.symbol} <small>{position.direction}</small></span><span>Qty {position.quantity}</span><span>Entry {position.entryPrice}</span></div>) : <p className="portfolio-note">No open net account positions reported.</p>}</div>
-      <p className="portfolio-note">These are exchange account-level net positions. They are not attributed to individual thesis allocations.</p>
-    </>}
-  </section>;
+  async function fetchAccount() {
+    if (loading) return;
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/pacifica/account", {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error("Please sign in to THESIS first.");
+        }
+        if (response.status === 403) {
+          throw new Error(
+            "This THESIS account is not authorized to read the configured Pacifica testnet account."
+          );
+        }
+        throw new Error(
+          data.error ?? "Could not fetch Pacifica account details."
+        );
+      }
+
+      setPayload(data as AccountPayload);
+      setFetchedAt(new Date().toISOString());
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not connect to Pacifica testnet."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section className="pacifica-account-card">
+      <div className="portfolio-card-head">
+        <div>
+          <div className="eyebrow">PACIFICA TESTNET · TESTING ONLY</div>
+          <h2>Exchange account</h2>
+        </div>
+        <span className="portfolio-status">
+          {loading ? "Fetching…" : payload ? "Fetched" : "Not fetched"}
+        </span>
+      </div>
+
+      <p className="portfolio-note">
+        Read-only account inspection. This panel does not submit trades or
+        change your Pacifica account.
+      </p>
+
+      <button
+        type="button"
+        className="primary-trade"
+        onClick={fetchAccount}
+        disabled={loading}
+      >
+        {loading
+          ? "Fetching account details…"
+          : payload
+            ? "Refresh Account Details"
+            : "Fetch Account Details"}
+      </button>
+
+      {error && (
+        <p className="inline-info" role="alert">
+          {error}
+        </p>
+      )}
+
+      {payload && (
+        <>
+          <div className="portfolio-metrics">
+            <span>
+              Equity <strong>{formatUsd(payload.account.equity)}</strong>
+            </span>
+            <span>
+              Available{" "}
+              <strong>{formatUsd(payload.account.availableBalance)}</strong>
+            </span>
+            <span>
+              Margin used{" "}
+              <strong>{formatUsd(payload.account.marginUsed)}</strong>
+            </span>
+            <span>
+              Open positions <strong>{payload.positions.length}</strong>
+            </span>
+          </div>
+
+          <div className="portfolio-legs">
+            {payload.positions.length === 0 ? (
+              <p className="portfolio-note">
+                Pacifica reports no open positions for this account.
+              </p>
+            ) : (
+              payload.positions.map((position) => (
+                <div className="portfolio-leg" key={position.symbol}>
+                  <span>
+                    <strong>{position.symbol}</strong>{" "}
+                    <small>{position.direction.toUpperCase()}</small>
+                  </span>
+                  <span>Quantity {position.quantity}</span>
+                  <span>Entry {formatUsd(position.entryPrice)}</span>
+                  <span>
+                    Liquidation{" "}
+                    {formatUsd(position.liquidationPrice)}
+                  </span>
+                  {position.fundingPaid != null && (
+                    <span>Funding {formatUsd(position.fundingPaid)}</span>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+
+          <p className="portfolio-note">
+            Account-level positions reported by Pacifica, not simulated THESIS
+            positions. Leverage is not included because the current positions
+            API adapter does not return it.
+          </p>
+
+          {fetchedAt && (
+            <p className="portfolio-note">
+              Last fetched: {new Date(fetchedAt).toLocaleString()}
+            </p>
+          )}
+
+          {payload.account.address && (
+            <p className="portfolio-note">
+              Configured account:{" "}
+              <code>{payload.account.address}</code>
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
 }

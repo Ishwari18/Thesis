@@ -75,9 +75,15 @@ export function AuthForm() {
         return;
       }
       setUser(result.data.user.email ?? normalizedEmail);
-      setPassword("");
-      setMessage(mode === "sign-in" ? "Signed in. Your account records are protected by Supabase RLS." : "Account created and signed in.");
-    } catch (error) {
+setPassword("");
+
+if (mode === "sign-in") {
+  window.location.assign("/portfolio");
+  return;
+}
+
+setMessage("Account created and signed in.");
+      } catch (error) {
       const failure = describeAuthError(error, mode, safeValues);
       setMessage(failure.message);
       setDiagnostic(failure.diagnostic);

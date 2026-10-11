@@ -86,7 +86,7 @@ export function PacificaAccountPanel() {
       <div className="portfolio-card-head">
         <div>
           <div className="eyebrow">PACIFICA TESTNET · TESTING ONLY</div>
-          <h2>Exchange account</h2>
+          <h2>Exchange net positions (all theses)</h2>
         </div>
         <span className="portfolio-status">
           {loading ? "Fetching…" : payload ? "Fetched" : "Not fetched"}
@@ -94,8 +94,7 @@ export function PacificaAccountPanel() {
       </div>
 
       <p className="portfolio-note">
-        Read-only account inspection. This panel does not submit trades or
-        change your Pacifica account.
+        Account-level Pacifica values and net symbol positions. A shared symbol may include quantities from several theses.
       </p>
 
       <button

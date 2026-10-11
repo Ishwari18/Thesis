@@ -26,3 +26,16 @@
 @media (max-width: 650px) { .portfolio-leg { grid-template-columns: 1fr 55px; } .portfolio-leg span:nth-of-type(n+3) { grid-column: span 2; } .portfolio-card { padding: 16px; } }
 
 .pacifica-account-card { max-width: 900px; margin: 0 0 20px; padding: 20px 22px; border: 1px solid #2b322f; border-radius: 14px; background: #121614; }
+.portfolio-section { margin: 34px 0 0; max-width: 900px; }
+.portfolio-section > .portfolio-card-head { margin-bottom: 14px; }
+.portfolio-status-row, .portfolio-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.portfolio-actions button { min-height: 36px; }
+.portfolio-actions button:disabled { opacity: .48; cursor: not-allowed; }
+.portfolio-leg { grid-template-columns: minmax(110px,1fr) repeat(4,minmax(80px,auto)); }
+.portfolio-leg > span { min-width: 0; overflow-wrap: anywhere; }
+.trade-confirm { position: fixed; z-index: 20; inset: 50% auto auto 50%; transform: translate(-50%,-50%); width: min(620px,calc(100vw - 32px)); max-height: min(85vh,720px); overflow: auto; padding: 24px; border: 1px solid #3b4540; border-radius: 12px; background: #141917; box-shadow: 0 24px 90px #000b; }
+.trade-confirm h3 { margin: 8px 0; font-size: 21px; }
+.trade-confirm p { color: #a3ada7; line-height: 1.5; }
+.trade-confirm .portfolio-legs { margin-top: 16px; }
+.trade-confirm .portfolio-leg { grid-template-columns: 1fr 1fr 1fr 1fr; }
+@media (max-width: 650px) { .portfolio-leg { grid-template-columns: 1fr 1fr; } .portfolio-leg span:nth-of-type(n+3) { grid-column: auto; } .trade-confirm .portfolio-leg { grid-template-columns: 1fr 1fr; } }

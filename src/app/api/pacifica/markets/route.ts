@@ -8,23 +8,40 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   const config = readPacificaConfig();
-
-  if (!config.marketDataEnabled) {
-    return NextResponse.json({ mode: "demo" });
-  }
+if (!config.marketDataEnabled) {
+  return NextResponse.json(
+    {
+      mode: "error",
+      message: "Pacifica testnet market data is disabled. Enable it to load live data.",
+    },
+    { status: 503 },
+  );
+}
+ 
 
   try {
-    const theses = await listTheses();
-    const allowedSymbols = new Set(
-      theses.flatMap((thesis) => thesis.assets.map((asset) => asset.symbol)),
+    //
+    const params = new URL(request.url).searchParams;
+const requested = params.getAll("symbol");
+
+const theses = requested.length ? [] : await listTheses();
+
+const symbols = requested.length
+  ? new Set(requested.filter((symbol) => /^[A-Z0-9]+$/.test(symbol)))
+  : new Set(
+      theses.flatMap((thesis) =>
+        thesis.assets.map((asset) => asset.symbol),
+      ),
     );
 
-    const params = new URL(request.url).searchParams;
-    const requested = params.getAll("symbol");
-    const symbols = requested.length
-      ? new Set(requested.filter((symbol) => allowedSymbols.has(symbol)))
-      : allowedSymbols;
-
+if (symbols.size > 100) {
+  return NextResponse.json(
+    { mode: "error", message: "Too many market symbols requested." },
+    { status: 400 },
+  );
+}
+    
+ //
     const snapshot = await fetchPacificaSnapshot();
 
     const markets = snapshot.markets.filter((market) =>

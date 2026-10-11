@@ -186,7 +186,7 @@ export function previewAllocation(
       return {
         ...base,
         eligible: false,
-        reason: "Pacifica market metadata is stale or has an invalid timestamp.",
+        reason: "Pacifica market metadata is missing or stale, or has an invalid timestamp.",
       };
     }
 
@@ -289,7 +289,7 @@ export function previewAllocation(
     valid: blocked.length === 0,
     error:
       blocked.length > 0
-        ? `${blocked.length} of ${legs.length} legs cannot be traded. Review the warnings below.`
+        ? `${blocked.length} of ${legs.length} legs cannot be traded. ${blocked[0].reason ?? "Review the warnings below."}`
         : undefined,
     collateral: collateral.toFixed(2),
     leverage: leverage.toString(),

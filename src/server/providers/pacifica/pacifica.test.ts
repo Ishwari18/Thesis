@@ -331,7 +331,7 @@ describe("Pacifica market data and transport", () => {
       source: "pacifica-testnet" as const,
     }));
 
-    const result = previewAllocation(allocationTestThesis, "100", 2, {
+    const result = previewAllocation(allocationTestThesis, "25", 2, {
       markets,
       quotes,
       source: "pacifica-testnet",
@@ -355,7 +355,7 @@ describe("Pacifica market data and transport", () => {
     };
 
     expect(
-      previewAllocation(allocationTestThesis, "100", 2, {
+      previewAllocation(allocationTestThesis, "25", 2, {
         ...stale,
         source: "pacifica-testnet",
       }).error,

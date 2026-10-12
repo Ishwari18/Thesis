@@ -12,6 +12,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return <PrivyProvider appId={appId}
    config={{
-    loginMethods: ["google", "twitter", "wallet"],
+    loginMethods: ["email", "google", "twitter", "wallet"],
   }}>{children}</PrivyProvider>;
 }

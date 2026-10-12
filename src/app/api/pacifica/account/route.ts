@@ -1,27 +1,22 @@
 import { NextResponse } from "next/server";
-import { getAppUser } from "@/lib/auth/server";
-import { readPacificaConfig } from "@/server/providers/pacifica/config";
+import { getAppUser, getLinkedSolanaWallet } from "@/lib/auth/server";
 import { getPacificaAccount } from "@/server/providers/pacifica/account";
 import { getPacificaPositions } from "@/server/providers/pacifica/positions";
+import { getPacificaLeverageSettings } from "@/server/providers/pacifica/account-settings";
 import { safePacificaMessage } from "@/server/providers/pacifica/errors";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const config = readPacificaConfig();
   const appUser = await getAppUser();
   if (!appUser) {
     return NextResponse.json({ error: "Sign in is required." }, { status: 401 });
   }
-  if (!config.allowedUserId || appUser.userId !== config.allowedUserId) {
-    return NextResponse.json(
-      { error: "Pacifica account reads are restricted to the configured testnet user." },
-      { status: 403 },
-    );
-  }
+  const address = await getLinkedSolanaWallet(appUser.userId);
+  if (!address) return NextResponse.json({ error: "Connect Phantom to check your Pacifica testnet balance." }, { status: 403 });
   try {
-    const [account, positions] = await Promise.all([getPacificaAccount(), getPacificaPositions()]);
-    return NextResponse.json({ source: "pacifica-testnet", account, positions });
+    const [account, positions, leverageSettings] = await Promise.all([getPacificaAccount(undefined, address), getPacificaPositions(undefined, address), getPacificaLeverageSettings(undefined, address)]);
+    return NextResponse.json({ source: "pacifica-testnet", account, positions, leverageSettings: Object.fromEntries(leverageSettings) });
   } catch (error) {
     return NextResponse.json({ error: safePacificaMessage(error) }, { status: 503 });
   }

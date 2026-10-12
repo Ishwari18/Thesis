@@ -3,52 +3,42 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useLogin, usePrivy } from "@privy-io/react-auth";
-
-function safeNext() {
-  const next = new URLSearchParams(window.location.search).get("next");
-  return next && next.startsWith("/") && !next.startsWith("//") ? next : "/portfolio";
-}
+import { useState } from "react";
+import { safeAuthRedirectPath } from "@/lib/supabase/redirect";
+import { ensureThesisSession } from "@/lib/auth/session";
 
 export default function PrivyLogin() {
   const router = useRouter();
-  //const { ready, authenticated, user, logout } = usePrivy();
   const { ready, authenticated, user, logout, getAccessToken } = usePrivy();
-  const { login } = useLogin({
-  onComplete: async () => {
+  const [message, setMessage] = useState("");
+  async function continueToNext() {
+    setMessage("");
     const token = await getAccessToken();
-
-    if (!token) {
-      console.error("Privy did not return an access token.");
-      return;
-    }
-
-    const response = await fetch("/api/auth/privy-session", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (!response.ok) {
-      console.error("Could not establish the THESIS session.");
-      return;
-    }
-
-    router.replace(safeNext());
+    try { await ensureThesisSession(token); }
+    catch (error) { return setMessage(error instanceof Error ? error.message : "THESIS could not verify your session."); }
+    router.replace(safeAuthRedirectPath(new URLSearchParams(window.location.search).get("next")));
     router.refresh();
-  },
-});
-
-  if (!ready) return <p>Loading...</p>;
-
-  if (authenticated) {
-    return (
-      <div>
-        <p>{user?.email?.address ?? user?.wallet?.address ?? "THESIS user"}</p>
-        <Link href="/portfolio">Open portfolio</Link>
-        <button onClick={async () => { await logout(); router.refresh(); }}>Log out</button>
-      </div>
-    );
   }
-  return <button onClick={() => login()}>Continue to THESIS</button>;
+  const { login } = useLogin({
+    onComplete: continueToNext,
+  });
+
+  return <main className="page-shell auth-shell">
+    <div className="auth-copy"><div className="eyebrow">THESIS ACCESS</div><h1>Trade a point of view.</h1><p>Sign in with Privy to manage your portfolio and continue to the thesis you selected. You can keep exploring Discover without signing in.</p></div>
+    <section className="auth-card" aria-live="polite">
+      <div className="eyebrow">ACCOUNT ACCESS</div>
+      {!ready ? <p className="auth-muted" role="status">Checking your sign-in…</p> : authenticated ? <>
+        <h2>{user?.twitter?.username ? `@${user.twitter.username}` : user?.google?.name || user?.email?.address || "THESIS member"}</h2>
+        <p className="auth-muted">Your THESIS login is connected. Wallet connection and Pacifica testnet funding are separate steps.</p>
+        <button className="primary-trade" onClick={continueToNext}>Continue</button>
+        <button className="auth-switch" onClick={async () => { await logout(); await fetch("/api/auth/privy-session", { method: "DELETE" }); router.refresh(); }}>Log out</button>
+      </> : <>
+        <h2>Log in to THESIS</h2>
+        <p className="auth-muted">Continue with email, Google, X, or a wallet through Privy. After signing in, connect Phantom to prepare to trade.</p>
+        <button className="primary-trade" onClick={() => login()}>Log in</button>
+      </>}
+      {message && <p className="auth-message" role="alert">{message}</p>}
+      <Link className="auth-back" href="/discover">Continue browsing Discover</Link>
+    </section>
+  </main>;
 }

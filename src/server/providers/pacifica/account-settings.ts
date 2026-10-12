@@ -11,10 +11,11 @@ const responseSchema = z.object({
   }).passthrough(),
 }).passthrough();
 
-export async function getPacificaLeverageSettings(client: PacificaClient = createPacificaClient()) {
+export async function getPacificaLeverageSettings(client: PacificaClient = createPacificaClient(), requestedAddress?:string) {
   const { accountAddress } = readPacificaConfig();
-  if (!accountAddress) throw new PacificaError("configuration", "Set PACIFICA_ACCOUNT_ADDRESS to read the configured testnet account.");
-  const raw = await client.get<unknown>("/api/v1/account/settings", { account: accountAddress });
+  const address=requestedAddress??accountAddress;
+  if (!address) throw new PacificaError("configuration", "A linked Solana wallet is required to read Pacifica testnet leverage settings.");
+  const raw = await client.get<unknown>("/api/v1/account/settings", { account: address });
   const response = responseSchema.safeParse(raw);
   if (!response.success || !response.data.success) throw new PacificaError("response", "Pacifica account settings response was invalid.");
   return new Map(response.data.data.margin_settings?.map((setting) => [setting.symbol, setting.leverage]) ?? []);

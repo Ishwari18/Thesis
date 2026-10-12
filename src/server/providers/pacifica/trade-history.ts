@@ -29,11 +29,13 @@ export async function getPacificaTradeHistory(options: {
   startTime?: number;
   maxPages?: number;
   timeoutMs?: number;
+  accountAddress?: string;
   client?: PacificaClient;
 } = {}) {
   const client = options.client ?? createPacificaClient(fetch, options.timeoutMs ?? 1_200);
-  const { accountAddress } = readPacificaConfig();
-  if (!accountAddress) throw new PacificaError("configuration", "Set PACIFICA_ACCOUNT_ADDRESS to read the configured testnet account.");
+  const { accountAddress: configuredAddress } = readPacificaConfig();
+  const accountAddress = options.accountAddress ?? configuredAddress;
+  if (!accountAddress) throw new PacificaError("configuration", "A linked Solana wallet is required to read Pacifica testnet trade history.");
 
   const trades: PacificaTrade[] = [];
   let cursor: string | undefined;

@@ -1,8 +1,7 @@
 import Decimal from "decimal.js";
-import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getAppUser, adminClient } from "@/lib/auth/server";
+import { getAppUser, getLinkedSolanaWallet, adminClient } from "@/lib/auth/server";
 import { getThesisBySlug } from "@/server/services/theses/service";
 import { previewAllocation } from "@/server/services/allocation";
 import { fetchPacificaSnapshot } from "@/server/providers/pacifica/market-data";
@@ -11,9 +10,11 @@ import { pacificaErrorDetails, safePacificaMessage } from "@/server/providers/pa
 import { getPacificaAccount } from "@/server/providers/pacifica/account";
 import { getPacificaPositions } from "@/server/providers/pacifica/positions";
 import { getPacificaLeverageSettings } from "@/server/providers/pacifica/account-settings";
-import { setPacificaLeverage } from "@/server/providers/pacifica/leverage";
-import { submitPacificaMarketBatch } from "@/server/providers/pacifica/orders";
+import { submitPacificaAgentLeverage, submitPacificaAgentMarketBatch } from "@/server/providers/pacifica/orders";
 import { reconcileAllocation } from "@/server/services/trading/reconcile";
+import { getBoundPacificaTradeAgent } from "@/server/providers/pacifica/agent-wallet";
+import { verifyThesisTradeApproval } from "@/server/services/trading/verify-approval";
+import type { ThesisTradeApproval } from "@/lib/trading/trade-approval";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,13 @@ const inputSchema = z.object({
   leverage: z.union([z.literal(2), z.literal(3), z.literal(5)]),
   side: z.enum(["long", "short"]),
   idempotencyKey: z.string().uuid(),
+  tradeApproval: z.object({
+    approval: z.object({
+      account: z.string(), thesisSlug: z.string(), collateral: z.string(), leverage: z.number().int(), side: z.enum(["long", "short"]), idempotencyKey: z.string().uuid(), timestamp: z.number().int(),
+      legs: z.array(z.object({ symbol: z.string(), side: z.enum(["bid", "ask"]), amount: z.string(), slippage_percent: z.literal("1"), reduce_only: z.literal(false) })).min(1).max(10),
+    }),
+    signature: z.string().min(80).max(100),
+  }),
 });
 
 type Db = {
@@ -35,19 +43,16 @@ const opposite = (direction: "long" | "short") => direction === "long" ? "short"
 export async function POST(request: Request) {
   const appUser = await getAppUser();
   if (!appUser) return NextResponse.json({ error: "Sign in to open a thesis position." }, { status: 401 });
+  const walletAddress = await getLinkedSolanaWallet(appUser.userId);
+  if (!walletAddress) return NextResponse.json({ error: "Connect and link your Phantom wallet before trading." }, { status: 403 });
 
-  let config;
   try {
-    config = requireExecutionConfig(readPacificaConfig());
+    requireExecutionConfig(readPacificaConfig());
   } catch (error) {
     return NextResponse.json({ error: safePacificaMessage(error) }, { status: 503 });
   }
-  if (appUser.userId !== config.allowedUserId) {
-    return NextResponse.json({ error: "This account is not authorized to trade with the configured Pacifica testnet wallet." }, { status: 403 });
-  }
-
   const parsed = inputSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: "Provide a thesis, collateral, 2x/3x/5x leverage, side and UUID idempotency key." }, { status: 400 });
+  if (!parsed.success) return NextResponse.json({ error: "Review the thesis and approve this complete trade once in Phantom." }, { status: 400 });
   const input = parsed.data;
   const db = adminClient() as unknown as Db;
   let lockAcquired = false;
@@ -57,13 +62,18 @@ export async function POST(request: Request) {
     if (lock.data !== true) return NextResponse.json({ error: "Another trade is being processed for this account. Wait for it to finish, then retry with the same request." }, { status: 409 });
     lockAcquired = true;
 
+    let agent;
+    try { agent = await getBoundPacificaTradeAgent(db, appUser.userId, walletAddress); }
+    catch (error) { return NextResponse.json({ error: safePacificaMessage(error) }, { status: 503 }); }
+    if (!agent) return NextResponse.json({ error: "Enable the THESIS trade-only agent once from the trading panel before placing orders." }, { status: 403 });
+
     const thesis = await getThesisBySlug(input.thesisSlug);
     if (!thesis) return NextResponse.json({ error: "This thesis is unavailable for trading." }, { status: 404 });
     const [snapshot, account, positions, leverageSettings] = await Promise.all([
       fetchPacificaSnapshot(),
-      getPacificaAccount(),
-      getPacificaPositions(),
-      getPacificaLeverageSettings(),
+      getPacificaAccount(undefined, walletAddress),
+      getPacificaPositions(undefined, walletAddress),
+      getPacificaLeverageSettings(undefined, walletAddress),
     ]);
 
     if (!account.availableBalance || !new Decimal(account.availableBalance).isFinite()) {
@@ -82,6 +92,27 @@ export async function POST(request: Request) {
     };
     const preview = previewAllocation(previewThesis, input.collateral, input.leverage, live);
     if (!preview.valid) return NextResponse.json({ error: preview.error ?? "This thesis cannot be opened with the current Pacifica market data.", preview }, { status: 422 });
+
+    const approvedLegs: ThesisTradeApproval["legs"] = preview.legs.map((leg) => ({
+      symbol: leg.symbol,
+      side: leg.direction === "long" ? "bid" : "ask",
+      amount: String(leg.quantity ?? ""),
+      slippage_percent: "1",
+      reduce_only: false,
+    }));
+    const expectedApproval: ThesisTradeApproval = {
+      account: walletAddress,
+      thesisSlug: input.thesisSlug,
+      collateral: input.collateral,
+      leverage: input.leverage,
+      side: input.side,
+      idempotencyKey: input.idempotencyKey,
+      timestamp: input.tradeApproval.approval.timestamp,
+      legs: approvedLegs,
+    };
+    if (!verifyThesisTradeApproval(input.tradeApproval.approval, input.tradeApproval.signature, expectedApproval)) {
+      return NextResponse.json({ error: "The Phantom approval expired or no longer matches this trade preview. Review again and approve the complete trade." }, { status: 422 });
+    }
 
     for (const asset of previewThesis.assets) {
       const position = positions.find((row) => row.symbol === asset.symbol && row.quantity !== "0");
@@ -116,7 +147,7 @@ export async function POST(request: Request) {
         .eq("idempotency_key", input.idempotencyKey)
         .maybeSingle();
       if (existingBatch.data) {
-        const current = await reconcileAllocation(appUser.userId, allocationId).catch(() => null);
+        const current = await reconcileAllocation(appUser.userId, allocationId, walletAddress).catch(() => null);
         return NextResponse.json({ allocationId, batchId: existingBatch.data.id, status: existingBatch.data.status, idempotentReplay: true, results: current?.confirmed ?? [], unresolvedClientOrderIds: current?.unresolvedClientOrderIds ?? [] });
       }
       if (created.data.status !== "pending") {
@@ -138,20 +169,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "The thesis market catalogue is incomplete. The allocation was cancelled." }, { status: 503 });
     }
     const symbolByMarket = new Map<string, string>(marketRows.data.map((row: { id: string; symbol: string }) => [row.id, row.symbol]));
-    const orderLegs = (legs.data as Array<{ id: string; market_id: string; direction: "long" | "short" }>).map((leg, index) => {
+    const orderLegs = (legs.data as Array<{ id: string; market_id: string; direction: "long" | "short" }>).map((leg) => {
       const sizing = preview.legs.find((row) => row.symbol === symbolByMarket.get(leg.market_id));
-      return { legId: leg.id, symbol: symbolByMarket.get(leg.market_id)!, side: leg.direction === "long" ? "bid" as const : "ask" as const, quantity: sizing?.quantity, clientOrderId: randomUUID() };
+      return { legId: leg.id, symbol: symbolByMarket.get(leg.market_id)!, side: leg.direction === "long" ? "bid" as const : "ask" as const, quantity: sizing?.quantity };
     });
     if (orderLegs.some((row) => !row.quantity)) {
       await cancelAllocation(db, allocationId, appUser.userId);
       return NextResponse.json({ error: "Pacifica lot-size validation could not calculate every order. The allocation was cancelled." }, { status: 422 });
     }
+    const expectedLeverageSymbols = orderLegs.filter((row) => leverageSettings.get(row.symbol) !== input.leverage).map((row) => row.symbol);
+    const orderLegsWithIds = orderLegs.map((row) => ({ ...row, quantity: row.quantity!, clientOrderId: crypto.randomUUID() }));
 
     const intent = await db.rpc("create_pacifica_execution_intent_for_user", {
       p_user_id: appUser.userId,
       p_allocation_id: allocationId,
       p_idempotency_key: input.idempotencyKey,
-      p_legs: orderLegs.map((row) => ({ allocation_leg_id: row.legId, side: row.side, requested_quantity: row.quantity, client_order_id: row.clientOrderId })),
+      p_legs: orderLegsWithIds.map((row) => ({ allocation_leg_id: row.legId, side: row.side, requested_quantity: row.quantity, client_order_id: row.clientOrderId })),
     });
     if (intent.error || !intent.data?.batch_id) {
       await cancelAllocation(db, allocationId, appUser.userId);
@@ -159,7 +192,7 @@ export async function POST(request: Request) {
     }
     const batchId = String(intent.data.batch_id);
     if (intent.data.existing) {
-      const current = await reconcileAllocation(appUser.userId, allocationId).catch(() => null);
+      const current = await reconcileAllocation(appUser.userId, allocationId, walletAddress).catch(() => null);
       return NextResponse.json({ allocationId, batchId, status: intent.data.status, idempotentReplay: true, results: current?.confirmed ?? [] });
     }
 
@@ -172,17 +205,17 @@ export async function POST(request: Request) {
     });
 
     try {
-      for (const row of orderLegs) await setPacificaLeverage(row.symbol, input.leverage);
+      for (const symbol of expectedLeverageSymbols) await submitPacificaAgentLeverage(symbol, input.leverage, walletAddress, agent.agentAddress, agent.identity);
     } catch (error) {
       const message = safePacificaMessage(error);
-      const recorded = await recordResults("rejected", orderLegs.map((row) => ({ client_order_id: row.clientOrderId, status: "rejected" as const, external_id: null })), message);
+      const recorded = await recordResults("rejected", orderLegsWithIds.map((row) => ({ client_order_id: row.clientOrderId, status: "rejected" as const, external_id: null })), message);
       const cancelled = await cancelAllocation(db, allocationId, appUser.userId);
       return NextResponse.json({ allocationId, batchId, status: "rejected", error: message, ...pacificaErrorDetails(error), cancelled, reconciliationRequired: Boolean(recorded.error) }, { status: recorded.error || !cancelled ? 202 : 422 });
     }
 
     let providerResults;
     try {
-      providerResults = await submitPacificaMarketBatch(orderLegs.map((row) => ({ symbol: row.symbol, side: row.side, quantity: row.quantity!, clientOrderId: row.clientOrderId, slippagePercent: "1", reduceOnly: false })));
+      providerResults = await submitPacificaAgentMarketBatch(orderLegsWithIds.map((row) => ({ symbol: row.symbol, side: row.side, quantity: row.quantity, reduceOnly: false, slippagePercent: "1", clientOrderId: row.clientOrderId })), walletAddress, agent.agentAddress, agent.identity);
     } catch (error) {
       const message = safePacificaMessage(error);
       await recordResults("submission_unknown", [], message);
@@ -193,20 +226,20 @@ export async function POST(request: Request) {
     const acceptedCount = providerResults.filter((row) => row.status === "accepted").length;
     const status = acceptedCount === providerResults.length ? "submitted" : acceptedCount === 0 ? "rejected" : "partial";
     const record = await recordResults(status, providerResults.map((row, index) => ({
-      client_order_id: orderLegs[index].clientOrderId,
+      client_order_id: orderLegsWithIds[index].clientOrderId,
       status: row.status === "accepted" ? "submitted" as const : "rejected" as const,
       external_id: row.externalId ?? null,
     })), acceptedCount === providerResults.length ? null : "One or more Pacifica batch actions were rejected.");
     if (acceptedCount === 0) {
       const cancelled = await cancelAllocation(db, allocationId, appUser.userId);
-      return NextResponse.json({ allocationId, batchId, status, cancelled, results: orderLegs.map((row) => ({ symbol: row.symbol, side: row.side, quantity: row.quantity, status: "rejected" })) }, { status: 422 });
+      return NextResponse.json({ allocationId, batchId, status, cancelled, results: orderLegsWithIds.map((row) => ({ symbol: row.symbol, side: row.side, quantity: row.quantity, status: "rejected" })) }, { status: 422 });
     }
     await db.rpc("mark_thesis_allocation_open_for_user", { p_allocation_id: allocationId, p_user_id: appUser.userId });
 
     let reconciliation = null;
-    if (!record.error) reconciliation = await reconcileAllocation(appUser.userId, allocationId).catch(() => null);
+    if (!record.error) reconciliation = await reconcileAllocation(appUser.userId, allocationId, walletAddress).catch(() => null);
     const fillByClientId = new Map((reconciliation?.confirmed ?? []).map((row) => [row.clientOrderId, row]));
-    const results = orderLegs.map((row, index) => {
+    const results = orderLegsWithIds.map((row, index) => {
       const provider = providerResults[index];
       const fill = fillByClientId.get(row.clientOrderId);
       return {
@@ -224,7 +257,7 @@ export async function POST(request: Request) {
     let leverageVerification: { impliedLeverage: string | null; expectedLeverage: number; verified: boolean | null } = { impliedLeverage: null, expectedLeverage: input.leverage, verified: null };
     if (reconciliation?.confirmed.length) {
       try {
-        const after = await getPacificaAccount();
+        const after = await getPacificaAccount(undefined, walletAddress);
         const marginDelta = new Decimal(after.marginUsed ?? "0").minus(account.marginUsed ?? "0");
         const filledNotional = reconciliation.confirmed.reduce((sum, fill) => sum.plus(new Decimal(fill.filledQuantity).mul(fill.averageFillPrice)), new Decimal(0));
         if (marginDelta.gt(0)) {
@@ -242,7 +275,7 @@ export async function POST(request: Request) {
       status,
       ...(record.error ? { reconciliationRequired: true, error: "Pacifica accepted the request, but THESIS could not save every per-leg result. Do not retry this trade." } : {}),
       results,
-      unresolvedClientOrderIds: reconciliation?.unresolvedClientOrderIds ?? orderLegs.filter((row, index) => providerResults[index].status === "accepted" && !fillByClientId.has(row.clientOrderId)).map((row) => row.clientOrderId),
+      unresolvedClientOrderIds: reconciliation?.unresolvedClientOrderIds ?? orderLegsWithIds.filter((row, index) => providerResults[index].status === "accepted" && !fillByClientId.has(row.clientOrderId)).map((row) => row.clientOrderId),
       leverageVerification,
     }, { status: record.error ? 202 : 200 });
   } catch (error) {

@@ -24,7 +24,7 @@ export type ReconcileResult = {
   hasMoreHistory: boolean;
 };
 
-export async function reconcileAllocation(userId: string, allocationId: string): Promise<ReconcileResult> {
+export async function reconcileAllocation(userId: string, allocationId: string, walletAddress?: string): Promise<ReconcileResult> {
   const db = adminClient() as unknown as TradingDb;
   const allocationResult = await db.from("thesis_allocations")
     .select("id,status")
@@ -60,13 +60,13 @@ export async function reconcileAllocation(userId: string, allocationId: string):
 
   // A short client timeout keeps this route bounded. If history has not caught
   // up yet, executions remain submitted/unknown and the UI offers reconciliation.
-  let history = await getPacificaTradeHistory({ startTime: earliest, maxPages: 2, timeoutMs: 1_200 });
+  let history = await getPacificaTradeHistory({ startTime: earliest, maxPages: 2, timeoutMs: 1_200, accountAddress: walletAddress });
   // Pacifica can publish fills shortly after accepting an order. One bounded
   // follow-up read catches the common propagation delay without holding the
   // open/close response beyond a few seconds.
   if (targetExecutions.some((row: any) => !history.trades.some((trade) => trade.client_order_id === row.client_order_id))) {
     await new Promise((resolve) => setTimeout(resolve, 350));
-    history = await getPacificaTradeHistory({ startTime: earliest, maxPages: 2, timeoutMs: 1_200 });
+    history = await getPacificaTradeHistory({ startTime: earliest, maxPages: 2, timeoutMs: 1_200, accountAddress: walletAddress });
   }
   const targetByClientId = new Map(targetExecutions.map((row: any) => [row.client_order_id, row]));
   const totals = new Map<string, { quantity: Decimal; notional: Decimal; fee: Decimal }>();

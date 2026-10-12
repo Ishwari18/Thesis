@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getAppUser, adminClient } from "@/lib/auth/server";
+import { getAppUser, getLinkedSolanaWallet, adminClient } from "@/lib/auth/server";
 import { readPacificaConfig, requireExecutionConfig } from "@/server/providers/pacifica/config";
 import { getPacificaPositions } from "@/server/providers/pacifica/positions";
-import { submitPacificaMarketBatch } from "@/server/providers/pacifica/orders";
+import { submitPacificaAgentMarketBatch } from "@/server/providers/pacifica/orders";
+import { getBoundPacificaTradeAgent } from "@/server/providers/pacifica/agent-wallet";
 import { pacificaErrorDetails, safePacificaMessage } from "@/server/providers/pacifica/errors";
 import { reconcileAllocation } from "@/server/services/trading/reconcile";
 
@@ -19,10 +20,10 @@ type Db = {
 export async function POST(request: Request) {
   const appUser = await getAppUser();
   if (!appUser) return NextResponse.json({ error: "Sign in to close a thesis position." }, { status: 401 });
-  let config;
-  try { config = requireExecutionConfig(readPacificaConfig()); }
+  try { requireExecutionConfig(readPacificaConfig()); }
   catch (error) { return NextResponse.json({ error: safePacificaMessage(error) }, { status: 503 }); }
-  if (appUser.userId !== config.allowedUserId) return NextResponse.json({ error: "This account is not authorized to trade with the configured Pacifica testnet wallet." }, { status: 403 });
+  const walletAddress = await getLinkedSolanaWallet(appUser.userId);
+  if (!walletAddress) return NextResponse.json({ error: "Connect and link your Phantom wallet before closing a position." }, { status: 403 });
   const parsed = inputSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Provide an allocation ID and UUID idempotency key." }, { status: 400 });
 
@@ -34,6 +35,9 @@ export async function POST(request: Request) {
     if (lock.error) return NextResponse.json({ error: "Trading is not ready. Apply the trade lifecycle migration before closing positions." }, { status: 503 });
     if (lock.data !== true) return NextResponse.json({ error: "Another trade is being processed for this account. Wait for it to finish, then retry with the same request." }, { status: 409 });
     locked = true;
+
+    const agent = await getBoundPacificaTradeAgent(db, appUser.userId, walletAddress);
+    if (!agent) return NextResponse.json({ error: "Enable the THESIS trade-only agent once from the trading panel before closing positions." }, { status: 403 });
 
     const allocation = await db.from("thesis_allocations")
       .select("id,status,side")
@@ -49,7 +53,7 @@ export async function POST(request: Request) {
       .eq("idempotency_key", idempotencyKey)
       .maybeSingle();
     if (replay.data) {
-      const reconciled = await reconcileAllocation(appUser.userId, allocationId).catch(() => null);
+      const reconciled = await reconcileAllocation(appUser.userId, allocationId, walletAddress).catch(() => null);
       return NextResponse.json({ allocationId, batchId: replay.data.id, status: replay.data.status, idempotentReplay: true, fills: reconciled?.confirmed ?? [], unresolvedClientOrderIds: reconciled?.unresolvedClientOrderIds ?? [] });
     }
 
@@ -78,7 +82,7 @@ export async function POST(request: Request) {
     const marketRows = await db.from("markets").select("id,symbol").in("id", [...new Set(remaining.map((row: { market_id: string }) => row.market_id))]);
     if (marketRows.error) return NextResponse.json({ error: "The thesis market catalogue could not be loaded." }, { status: 503 });
     const symbolByMarket = new Map((marketRows.data ?? []).map((row: { id: string; symbol: string }) => [row.id, row.symbol]));
-    const positions = await getPacificaPositions();
+    const positions = await getPacificaPositions(undefined, walletAddress);
     for (const leg of remaining) {
       const symbol = symbolByMarket.get(leg.market_id) as string | undefined;
       if (!symbol) return NextResponse.json({ error: "A thesis market is missing; no close order was sent." }, { status: 503 });
@@ -98,14 +102,14 @@ export async function POST(request: Request) {
     }
     const orders = intent.data.legs as Array<{ symbol: string; side: "bid" | "ask"; quantity: string; clientOrderId: string }>;
     try {
-      const providerResults = await submitPacificaMarketBatch(orders.map((order) => ({
+      const providerResults = await submitPacificaAgentMarketBatch(orders.map((order) => ({
         symbol: order.symbol,
         side: order.side,
         quantity: order.quantity,
         clientOrderId: order.clientOrderId,
         slippagePercent: "1",
         reduceOnly: true,
-      })));
+      })), walletAddress, agent.agentAddress, agent.identity);
       const accepted = providerResults.filter((row) => row.status === "accepted").length;
       const status = accepted === providerResults.length ? "submitted" : accepted === 0 ? "rejected" : "partial";
       const recorded = await db.rpc("record_pacifica_execution_results", {
@@ -115,7 +119,7 @@ export async function POST(request: Request) {
         p_provider_error: accepted === providerResults.length ? null : "One or more reduce-only close actions were rejected. The remaining quantity is still open.",
         p_results: providerResults.map((row, index) => ({ client_order_id: orders[index].clientOrderId, status: row.status === "accepted" ? "submitted" : "rejected", external_id: row.externalId ?? null })),
       });
-      const reconciled = recorded.error ? null : await reconcileAllocation(appUser.userId, allocationId).catch(() => null);
+      const reconciled = recorded.error ? null : await reconcileAllocation(appUser.userId, allocationId, walletAddress).catch(() => null);
       const fills = new Map((reconciled?.confirmed ?? []).map((row) => [row.clientOrderId, row]));
       return NextResponse.json({
         allocationId,

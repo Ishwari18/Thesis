@@ -15,6 +15,14 @@ const PALETTE = [
   "#d07e75",
 ];
 
+// Discover is currently the three curated test theses. Older seeded rows in
+// existing databases may have alternate slugs but duplicate these names.
+const DISCOVERY_TEST_SLUGS = new Set([
+  "ai-frontier",
+  "ai-compute-trade",
+  "crypto-supercycle",
+]);
+
 type ThesisRow = {
   id: string;
   slug: string;
@@ -169,9 +177,8 @@ function validateThesis(loaded: LoadedThesis): string[] {
     problems.push("asset references a missing market");
   }
 
-  if (assets.some(({ market }) => market && !market.active)) {
-    problems.push("contains an inactive market");
-  }
+  // Published theses stay visible even when a constituent is not currently
+  // tradable. Live market availability is checked separately by the trade flow.
 
   const symbols = assets.map(({ market }) => market?.symbol);
 
@@ -282,6 +289,7 @@ export async function listTheses(): Promise<Thesis[]> {
   const result: Thesis[] = [];
 
   for (const thesis of loaded) {
+    if (!DISCOVERY_TEST_SLUGS.has(thesis.row.slug)) continue;
     const problems = validateThesis(thesis);
 
     if (problems.length > 0) {

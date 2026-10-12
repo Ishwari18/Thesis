@@ -4,7 +4,7 @@ import { createPacificaClient, type PacificaClient } from "./client";
 import { readPacificaConfig, requireMarketDataConfig } from "./config";
 import { PacificaError } from "./errors";
 
-const MARKET_TTL=5*60_000, PRICE_TTL=10_000, MAX_PRICE_AGE=30_000;
+const MARKET_TTL=5*60_000, PRICE_TTL=10_000, MAX_PRICE_AGE=30_000, MAX_FUTURE_CLOCK_SKEW=5_000;
 let cachedMarkets:{at:number;rows:PacificaMarket[]}|undefined;
 let cachedQuotes:{at:number;rows:PacificaMarketQuote[]}|undefined;
 let inflight:Promise<PacificaSnapshot>|undefined;
@@ -19,7 +19,10 @@ export async function fetchPacificaSnapshot(client:PacificaClient=createPacifica
     const priceRows=getData(pRaw,"prices",x=>{const p=priceSchema.safeParse(x);return p.success?[p.data]:[];});
     const observedAt=new Date(now).toISOString();
     const markets=marketRows.map((m)=>({symbol:m.symbol,exchangeId:m.symbol,active:m.instrument_type==="perpetual",instrumentType:m.instrument_type,minNotional:m.min_order_size,...(m.max_order_size?{maxNotional:m.max_order_size}:{}),lotSize:m.lot_size,tickSize:m.tick_size,maxLeverage:m.max_leverage,observedAt,source:"pacifica-testnet" as const}));
-    const quotes=priceRows.map((p)=>({symbol:p.symbol,markPrice:p.mark,...(p.mid?{midPrice:p.mid}:{}),...(p.oracle?{oraclePrice:p.oracle}:{}),observedAt:new Date(p.timestamp).toISOString(),fresh:now-p.timestamp>=0&&now-p.timestamp<=MAX_PRICE_AGE,...(p.funding?{fundingRate:p.funding}:{}),...(p.next_funding?{nextFundingRate:p.next_funding}:{}),source:"pacifica-testnet" as const}));
+    // Pacifica timestamps can be slightly ahead of the server clock or the
+    // request start time captured above. Allow a small clock skew while still
+    // rejecting old prices.
+    const quotes=priceRows.map((p)=>{const age=now-p.timestamp;return {symbol:p.symbol,markPrice:p.mark,...(p.mid?{midPrice:p.mid}:{}),...(p.oracle?{oraclePrice:p.oracle}:{}),observedAt:new Date(p.timestamp).toISOString(),fresh:age>=-MAX_FUTURE_CLOCK_SKEW&&age<=MAX_PRICE_AGE,...(p.funding?{fundingRate:p.funding}:{}),...(p.next_funding?{nextFundingRate:p.next_funding}:{}),source:"pacifica-testnet" as const};});
     cachedMarkets={at:now,rows:markets};cachedQuotes={at:now,rows:quotes};return {markets,quotes,observedAt,source:"pacifica-testnet" as const};
   })();
   try{return await inflight;}finally{inflight=undefined;}

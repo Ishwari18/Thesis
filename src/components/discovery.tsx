@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { usePrivy } from "@privy-io/react-auth";
 import { Search, ArrowUpDown, ArrowUpRight } from "lucide-react";
 import type { Thesis } from "@/lib/types";
 import {
@@ -10,6 +12,8 @@ import {
 } from "./market-data/live-thesis-prices";
 
 export function Discovery({ theses }: { theses: Thesis[] }) {
+  const router = useRouter();
+  const { ready: authReady, authenticated } = usePrivy();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All themes");
   const [sort, setSort] = useState("performance");
@@ -126,7 +130,17 @@ export function Discovery({ theses }: { theses: Thesis[] }) {
               <small>SIMULATED</small>
             </span>
 
-            <span className="trade-link">
+            <span className="trade-link" role="button" tabIndex={0} onClick={(event) => {
+              event.preventDefault();
+              const destination = `/theses/${t.slug}?trade=1`;
+              router.push(authReady && authenticated ? destination : `/auth?next=${encodeURIComponent(destination)}`);
+            }} onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                const destination = `/theses/${t.slug}?trade=1`;
+                router.push(authReady && authenticated ? destination : `/auth?next=${encodeURIComponent(destination)}`);
+              }
+            }}>
               Trade <ArrowUpRight size={14} />
             </span>
           </Link>

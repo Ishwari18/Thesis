@@ -51,8 +51,7 @@ export function readPacificaConfig(): PacificaConfig {
 
 export function requireMarketDataConfig(config=readPacificaConfig()) { if(!config.marketDataEnabled) throw new PacificaConfigError("Pacifica market data is disabled. Set PACIFICA_MARKET_DATA_ENABLED=true to opt in to testnet data."); return config; }
 export function requireExecutionConfig(config=readPacificaConfig()) {
-  if(!config.executionEnabled) throw new PacificaConfigError("Pacifica testnet execution is disabled. Explicitly enable PACIFICA_TESTNET_EXECUTION_ENABLED=true after configuring the single-account testnet allowlist.");
+  if(!config.executionEnabled) throw new PacificaConfigError("Pacifica testnet trading is disabled. Set PACIFICA_TESTNET_EXECUTION_ENABLED=true to allow wallet-authorized testnet orders.");
   if(!config.marketDataEnabled) throw new PacificaConfigError("Testnet execution also requires PACIFICA_MARKET_DATA_ENABLED=true for fresh server-side market validation.");
-  if(!config.accountAddress||!config.privateKey||!config.allowedUserId) throw new PacificaConfigError("Execution requires PACIFICA_ACCOUNT_ADDRESS, PACIFICA_PRIVATE_KEY and PACIFICA_ALLOWED_SUPABASE_USER_ID.");
-  return config as PacificaConfig & {accountAddress:string;privateKey:string;allowedUserId:string};
+  return config;
 }

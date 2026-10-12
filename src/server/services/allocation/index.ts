@@ -50,7 +50,8 @@ function freshTimestamp(
 ): boolean {
   const parsed = Date.parse(timestamp);
   const age = now - parsed;
-  return Number.isFinite(parsed) && age >= 0 && age <= maxAgeMs;
+  // Pacifica timestamps can lead the app server by a small clock skew.
+  return Number.isFinite(parsed) && age >= -5_000 && age <= maxAgeMs;
 }
 
 export function previewAllocation(
@@ -124,7 +125,10 @@ export function previewAllocation(
       minimum: new Decimal(minimumValue).toFixed(2),
     };
 
-    if (!asset.active) {
+    // When a live snapshot is present, its market status is authoritative.
+    // The thesis row may remain inactive in the database until metadata has
+    // been verified, but that static flag must not override fresh testnet data.
+    if (!live && !asset.active) {
       return {
         ...base,
         eligible: false,

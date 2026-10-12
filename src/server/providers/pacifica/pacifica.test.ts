@@ -18,6 +18,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getPacificaAccount } from "./account";
 import { getPacificaPositions } from "./positions";
+import { PacificaError, pacificaErrorDetails, parsePacificaErrorBody, safePacificaMessage } from "./errors";
 
 const allocationTestThesis = {
   slug: "allocation-test",
@@ -200,17 +201,31 @@ describe("Pacifica market data and transport", () => {
     ).rejects.toThrow(/market info response was invalid/);
   });
 
-  it("normalizes timeouts and HTTP errors without exposing payloads", async () => {
+  it("preserves HTTP status and safely parses provider diagnostics", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const http = createPacificaClient(
       async () =>
-        new Response(JSON.stringify({ error: "private response details" }), {
-          status: 503,
+        new Response(JSON.stringify({ data: { code: 5, message: "INSUFFICIENT_BALANCE" }, signature: "topsecret" }), {
+          status: 422,
         }),
     );
 
-    await expect(http.get("/api/v1/info")).rejects.toThrow(
-      "Pacifica testnet returned HTTP 503.",
-    );
+    let caught: unknown;
+    try { await http.get("/api/v1/info"); } catch (error) { caught = error; }
+    expect(caught).toMatchObject({ status: 422, providerCode: 5, providerMessage: "INSUFFICIENT_BALANCE" });
+    expect(safePacificaMessage(caught)).toMatch(/insufficient available balance/i);
+    expect(pacificaErrorDetails(caught)).toEqual({ providerCode: 5, providerMessage: "INSUFFICIENT_BALANCE", providerHttpStatus: 422 });
+    expect(warn).toHaveBeenCalledWith("[pacifica] HTTP request failed", expect.objectContaining({ endpoint: "/api/v1/info", status: 422, providerCode: 5, providerMessage: "INSUFFICIENT_BALANCE" }));
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("topsecret");
+
+    expect(parsePacificaErrorBody({ error: { code: 36, detail: "signature=private-secret duplicate" } })).toEqual({
+      providerCode: 36,
+      providerMessage: "signature=[redacted] duplicate",
+    });
+    expect(parsePacificaErrorBody("not json")).toEqual({});
+
+    const withoutExpectedShape = createPacificaClient(async () => new Response("plain error", { status: 422 }));
+    await expect(withoutExpectedShape.get("/api/v1/info")).rejects.toMatchObject({ status: 422 });
 
     const timeout = createPacificaClient(async () => {
       const error = new Error("aborted");
@@ -221,6 +236,28 @@ describe("Pacifica market data and transport", () => {
     await expect(timeout.get("/api/v1/info")).rejects.toThrow(
       "Pacifica testnet request timed out.",
     );
+  });
+
+  it("maps documented Pacifica business error codes to actionable messages", () => {
+    const messages: Record<number, RegExp> = {
+      5: /insufficient available balance/i,
+      7: /minimum size/i,
+      8: /maximum size/i,
+      11: /leverage/i,
+      20: /order type/i,
+      25: /execution price/i,
+      28: /liquidate/i,
+      30: /mark price/i,
+      36: /client order ID.*reconcile/i,
+      52: /tick size/i,
+      59: /amount precision/i,
+      63: /no mark price/i,
+    };
+    for (const [code, expected] of Object.entries(messages)) {
+      const error = new PacificaError("http", "fallback", 422, Number(code));
+      expect(safePacificaMessage(error)).toMatch(expected);
+    }
+    expect(safePacificaMessage(new PacificaError("http", "fallback", 422, 999, "provider detail"))).toBe("provider detail");
   });
 
   it("normalizes account and net symbol positions without thesis attribution", async () => {

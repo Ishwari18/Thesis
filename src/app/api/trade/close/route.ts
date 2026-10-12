@@ -4,7 +4,7 @@ import { getAppUser, adminClient } from "@/lib/auth/server";
 import { readPacificaConfig, requireExecutionConfig } from "@/server/providers/pacifica/config";
 import { getPacificaPositions } from "@/server/providers/pacifica/positions";
 import { submitPacificaMarketBatch } from "@/server/providers/pacifica/orders";
-import { safePacificaMessage } from "@/server/providers/pacifica/errors";
+import { pacificaErrorDetails, safePacificaMessage } from "@/server/providers/pacifica/errors";
 import { reconcileAllocation } from "@/server/services/trading/reconcile";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +14,7 @@ type Db = {
   from(table: string): any;
   rpc(name: string, args: Record<string, unknown>): Promise<{ data: any; error: { message?: string } | null }>;
 };
+
 
 export async function POST(request: Request) {
   const appUser = await getAppUser();
@@ -140,11 +141,17 @@ export async function POST(request: Request) {
         p_provider_error: message,
         p_results: [],
       });
-      return NextResponse.json({ allocationId, batchId, status: "submission_unknown", reconciliationRequired: true, error: "Pacifica close outcome is unknown. Do not retry; reconcile this thesis before taking another action." }, { status: 202 });
+      return NextResponse.json({ allocationId, batchId, status: "submission_unknown", reconciliationRequired: true, error: `${message} Close outcome still needs reconciliation; do not retry.`, ...pacificaErrorDetails(error) }, { status: 202 });
     }
   } catch (error) {
-    return NextResponse.json({ error: safePacificaMessage(error) }, { status: 503 });
+    return NextResponse.json({ error: safePacificaMessage(error), ...pacificaErrorDetails(error) }, { status: 503 });
   } finally {
-    if (locked) await db.rpc("release_pacifica_trade_lock_for_user", { p_user_id: appUser.userId, p_lock_key: idempotencyKey }).catch(() => undefined);
+    if (locked) {
+      try {
+        await db.rpc("release_pacifica_trade_lock_for_user", { p_user_id: appUser.userId, p_lock_key: idempotencyKey });
+      } catch {
+        // Lock cleanup must not replace the close route's response.
+      }
+    }
   }
 }

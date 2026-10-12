@@ -18,6 +18,9 @@ type TradeResult = {
   allocationId?: string;
   status?: string;
   error?: string;
+  providerCode?: number;
+  providerMessage?: string;
+  providerHttpStatus?: number;
   results?: Array<{ symbol: string; side?: string; quantity?: string; status: string; fillPrice?: string | null; fillQuantity?: string | null }>;
   unresolvedClientOrderIds?: string[];
   leverageVerification?: { impliedLeverage: string | null; expectedLeverage: number; verified: boolean | null };
@@ -82,13 +85,14 @@ export function TradePanel({ thesis }: { thesis: Thesis }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ thesisSlug: thesis.slug, collateral: amount, leverage, side, idempotencyKey: crypto.randomUUID() }),
       });
-      const body = await response.json() as TradeResult;
+      const body = await response.json().catch(() => null) as TradeResult | null;
+      if (!body) throw new Error(`THESIS returned an unreadable response (HTTP ${response.status}). Check the dev server terminal for details.`);
       if (response.status === 401) throw new Error("Sign in to THESIS before opening a position.");
       if (response.status === 403) throw new Error("This THESIS account is not authorized to use the configured Pacifica testnet wallet.");
       if (!response.ok && response.status !== 202) throw new Error(body.error ?? "The thesis position could not be opened.");
       setResult(body);
       setReviewing(false);
-      if (body.status === "submission_unknown") setActionMessage("Order outcome unclear. Do not retry; open Portfolio and reconcile this thesis.");
+      if (body.status === "submission_unknown") setActionMessage(body.error ?? "Order outcome unclear. Do not retry; open Portfolio and reconcile this thesis.");
       else if (body.results?.some((row) => row.status === "accepted_unconfirmed")) setActionMessage("Pacifica accepted the order, but fills are not confirmed yet. Reconcile in Portfolio before closing.");
       else if (body.status === "partial") setActionMessage("Some legs were rejected. Confirmed legs remain open; review each leg and use Portfolio to reconcile.");
       else setActionMessage(body.error ?? "Thesis orders submitted.");
@@ -119,7 +123,7 @@ export function TradePanel({ thesis }: { thesis: Thesis }) {
 
     {!reviewing && !result && <button className="primary-trade" disabled={disabled} onClick={() => setReviewing(true)}>{`Review ${side === "long" ? "long" : "short"}`}</button>}
     {reviewing && <div className="inline-info" role="group" aria-label="Confirm thesis order"><strong>Review {side} position</strong><p>${amount} collateral at {leverage}x, approximately ${preview.exposure} exposure. This sends one market batch covering {thesis.assets.length} legs.</p><button className="primary-trade" disabled={disabled} onClick={openPosition}>{loading ? "Submitting…" : `Confirm and go ${side}`}</button><button className="portfolio-discover" disabled={loading} onClick={() => setReviewing(false)}>Back</button></div>}
-    {actionMessage && <div className="inline-info" role={result?.status === "submission_unknown" ? "alert" : "status"}>{actionMessage}{actionMessage.includes("Sign in") && <> <Link href="/auth">Sign in</Link></>}</div>}
+    {actionMessage && <div className="inline-info" role={result?.status === "submission_unknown" ? "alert" : "status"}>{actionMessage}{actionMessage.includes("Sign in") && <> <Link href="/auth">Sign in</Link></>}{result?.providerCode !== undefined && <div>Pacifica error code: {result.providerCode}{result.providerHttpStatus ? ` (HTTP ${result.providerHttpStatus})` : ""}{result.providerMessage ? ` — ${result.providerMessage}` : ""}</div>}</div>}
     {result?.results?.length ? <div className="portfolio-legs" aria-label="Per-leg trade results">{result.results.map((row) => <div className="portfolio-leg" key={row.symbol}><span><strong>{row.symbol}</strong></span><span>{row.status.replaceAll("_", " ")}</span><span>{row.fillQuantity ? `${row.fillQuantity} filled` : row.quantity ?? "—"}</span><span>{row.fillPrice ? `Fill $${row.fillPrice}` : row.status === "accepted_unconfirmed" ? "Fill unconfirmed" : "—"}</span></div>)}</div> : null}
     {result?.allocationId && <Link className="portfolio-discover" href="/portfolio">View Portfolio</Link>}
     {result?.leverageVerification?.verified === false && <div className="warning-box" role="alert">Observed implied leverage was {result.leverageVerification.impliedLeverage}x; expected {result.leverageVerification.expectedLeverage}x. Review the exchange account before opening another trade.</div>}

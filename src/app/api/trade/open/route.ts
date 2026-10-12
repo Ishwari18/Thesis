@@ -7,7 +7,7 @@ import { getThesisBySlug } from "@/server/services/theses/service";
 import { previewAllocation } from "@/server/services/allocation";
 import { fetchPacificaSnapshot } from "@/server/providers/pacifica/market-data";
 import { readPacificaConfig, requireExecutionConfig } from "@/server/providers/pacifica/config";
-import { safePacificaMessage } from "@/server/providers/pacifica/errors";
+import { pacificaErrorDetails, safePacificaMessage } from "@/server/providers/pacifica/errors";
 import { getPacificaAccount } from "@/server/providers/pacifica/account";
 import { getPacificaPositions } from "@/server/providers/pacifica/positions";
 import { getPacificaLeverageSettings } from "@/server/providers/pacifica/account-settings";
@@ -177,7 +177,7 @@ export async function POST(request: Request) {
       const message = safePacificaMessage(error);
       const recorded = await recordResults("rejected", orderLegs.map((row) => ({ client_order_id: row.clientOrderId, status: "rejected" as const, external_id: null })), message);
       const cancelled = await cancelAllocation(db, allocationId, appUser.userId);
-      return NextResponse.json({ allocationId, batchId, status: "rejected", error: message, cancelled, reconciliationRequired: Boolean(recorded.error) }, { status: recorded.error || !cancelled ? 202 : 422 });
+      return NextResponse.json({ allocationId, batchId, status: "rejected", error: message, ...pacificaErrorDetails(error), cancelled, reconciliationRequired: Boolean(recorded.error) }, { status: recorded.error || !cancelled ? 202 : 422 });
     }
 
     let providerResults;
@@ -187,7 +187,7 @@ export async function POST(request: Request) {
       const message = safePacificaMessage(error);
       await recordResults("submission_unknown", [], message);
       await db.rpc("mark_thesis_allocation_open_for_user", { p_allocation_id: allocationId, p_user_id: appUser.userId });
-      return NextResponse.json({ allocationId, batchId, status: "submission_unknown", reconciliationRequired: true, error: "Pacifica submission outcome is unknown. Do not retry; use Reconcile in Portfolio." }, { status: 202 });
+      return NextResponse.json({ allocationId, batchId, status: "submission_unknown", reconciliationRequired: true, error: `${message} Submission outcome still needs reconciliation; do not retry.`, ...pacificaErrorDetails(error) }, { status: 202 });
     }
 
     const acceptedCount = providerResults.filter((row) => row.status === "accepted").length;
@@ -246,9 +246,15 @@ export async function POST(request: Request) {
       leverageVerification,
     }, { status: record.error ? 202 : 200 });
   } catch (error) {
-    return NextResponse.json({ error: safePacificaMessage(error) }, { status: 503 });
+    return NextResponse.json({ error: safePacificaMessage(error), ...pacificaErrorDetails(error) }, { status: 503 });
   } finally {
-    if (lockAcquired) await db.rpc("release_pacifica_trade_lock_for_user", { p_user_id: appUser.userId, p_lock_key: input.idempotencyKey }).catch(() => undefined);
+    if (lockAcquired) {
+      try {
+        await db.rpc("release_pacifica_trade_lock_for_user", { p_user_id: appUser.userId, p_lock_key: input.idempotencyKey });
+      } catch {
+        // Lock cleanup must not replace the trade route's response.
+      }
+    }
   }
 }
 

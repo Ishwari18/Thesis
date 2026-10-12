@@ -22,7 +22,7 @@ export default async function DiscoverPage() {
 
         <div className="demo-note">
           <span className="demo-dot" />
-          SIMULATED RETURNS
+          LIVE MARKETS · NO THESIS EQUITY HISTORY
         </div>
       </div>
 

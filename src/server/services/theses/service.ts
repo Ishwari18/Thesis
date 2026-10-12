@@ -193,25 +193,6 @@ function validateThesis(loaded: LoadedThesis): string[] {
   return problems;
 }
 
-// Historical returns remain simulated until real candle history is integrated.
-// The UI must continue labelling these values as simulated.
-function simulatedSeries(slug: string) {
-  const seed = hash(slug) % 8;
-  let value = 100;
-
-  return Array.from({ length: 48 }, (_, index) => {
-    value *=
-      1 +
-      Math.sin((index + 2) * (seed + 2) * 0.47) * 0.012 +
-      (seed % 3 === 0 ? 0.003 : 0.001);
-
-    return {
-      date: `W${index + 1}`,
-      value: Math.round(value * 100) / 100,
-    };
-  });
-}
-
 function toThesis({ row, assets }: LoadedThesis): Thesis {
   const color = PALETTE[hash(row.slug) % PALETTE.length];
 
@@ -243,8 +224,6 @@ function toThesis({ row, assets }: LoadedThesis): Thesis {
     });
 
   const directions = new Set(mappedAssets.map((asset) => asset.direction));
-  const series = simulatedSeries(row.slug);
-
   return {
     slug: row.slug,
     name: row.name,
@@ -261,11 +240,6 @@ function toThesis({ row, assets }: LoadedThesis): Thesis {
       .join(""),
     published: row.created_at.slice(0, 10),
     assets: mappedAssets,
-    series,
-    allTime:
-      Math.round(
-        (series[series.length - 1].value / series[0].value - 1) * 1000,
-      ) / 10,
     tracks: "Weighted basket of Pacifica perpetual markets",
     rebalancing: "No automated rebalancing",
     posture:
@@ -279,7 +253,7 @@ function toThesis({ row, assets }: LoadedThesis): Thesis {
     mandate:
       `${row.rationale}\n\n` +
       "Target weights come from the published thesis. " +
-      "Historical performance is simulated, not actual returns. " +
+      "Historical thesis performance is unavailable because reliable historical position snapshots are not recorded. " +
       "Order sizes and availability must be validated against live Pacifica data.",
   };
 }

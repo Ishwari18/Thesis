@@ -16,7 +16,7 @@ export function Discovery({ theses }: { theses: Thesis[] }) {
   const { ready: authReady, authenticated } = usePrivy();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All themes");
-  const [sort, setSort] = useState("performance");
+  const [sort, setSort] = useState("recent");
   const { prices } = useLiveThesisPrices(theses);
 
   const categories = [
@@ -34,11 +34,7 @@ export function Discovery({ theses }: { theses: Thesis[] }) {
               .toLowerCase()
               .includes(query.toLowerCase())
         )
-        .sort((a, b) =>
-          sort === "recent"
-            ? b.published.localeCompare(a.published)
-            : b.allTime - a.allTime
-        ),
+        .sort((a, b) => sort === "recent" ? b.published.localeCompare(a.published) : a.name.localeCompare(b.name)),
     [theses, query, category, sort]
   );
 
@@ -66,11 +62,11 @@ export function Discovery({ theses }: { theses: Thesis[] }) {
           <button
             className="sort-control"
             onClick={() =>
-              setSort(sort === "performance" ? "recent" : "performance")
+              setSort(sort === "recent" ? "name" : "recent")
             }
           >
             <ArrowUpDown size={13} />
-            {sort === "performance" ? "Top performance" : "Recently published"}
+            {sort === "recent" ? "Recently published" : "Name"}
           </button>
         </div>
       </div>
@@ -79,7 +75,7 @@ export function Discovery({ theses }: { theses: Thesis[] }) {
         <span>THESIS</span>
         <span>COMPOSITION</span>
         <span>LIVE MARKETS</span>
-        <span>DEMO RETURN</span>
+        <span>THESIS PERFORMANCE</span>
         <span />
       </div>
 
@@ -125,9 +121,9 @@ export function Discovery({ theses }: { theses: Thesis[] }) {
               )}
             </span>
 
-            <span className={`row-return ${t.allTime >= 0 ? "positive" : "negative"}`}>
-              {t.allTime >= 0 ? "+" : ""}{t.allTime.toFixed(1)}%
-              <small>SIMULATED</small>
+            <span className="row-return performance-unavailable">
+              Unavailable
+              <small>NO EQUITY HISTORY</small>
             </span>
 
             <span className="trade-link" role="button" tabIndex={0} onClick={(event) => {
@@ -162,9 +158,8 @@ export function Discovery({ theses }: { theses: Thesis[] }) {
       </div>
 
       <div className="list-footnote">
-        Market prices refresh every 10 seconds from Pacifica testnet when
-        available. Thesis returns and chart history are simulated and do not
-        represent exchange results.
+        Constituent market prices use Pacifica testnet when enabled. Thesis
+        performance is unavailable without reliable historical positions.
       </div>
     </>
   );

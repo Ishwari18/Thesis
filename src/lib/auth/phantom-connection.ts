@@ -37,6 +37,12 @@ export function getInjectedPhantom(): PhantomSolanaProvider | null {
   return browserWindow.solana?.isPhantom ? browserWindow.solana : null;
 }
 
+export async function connectInjectedPhantom() {
+  const provider = getInjectedPhantom();
+  if (!provider) throw new Error("Phantom extension isn't available in this browser. Open THESIS in the browser profile where Phantom is installed.");
+  return activePhantomAddress(provider);
+}
+
 export async function disconnectInjectedPhantom() {
   await getInjectedPhantom()?.disconnect?.();
   connectedPhantomAddress = null;

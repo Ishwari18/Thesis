@@ -11,19 +11,12 @@ export default async function DiscoverPage() {
     <main className="page-shell">
       <div className="page-heading">
         <div>
-          <div className="eyebrow">
-            THE MARKET, THROUGH A POINT OF VIEW
-          </div>
+         
           <h1>Discover</h1>
-          <p className="subheading">
-            Curated ideas. Clear exposure. Your call.
-          </p>
+         
         </div>
 
-        <div className="demo-note">
-          <span className="demo-dot" />
-          LIVE MARKETS · NO THESIS EQUITY HISTORY
-        </div>
+       
       </div>
 
       <Discovery theses={theses} />

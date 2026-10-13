@@ -19,13 +19,11 @@ const timeLabel = (timestamp: number, period: ChartPeriod) => period === "1D"
   : new Date(timestamp).toLocaleDateString([], { month: "short", day: "numeric", ...(period === "ALL" ? { year: "2-digit" } : {}) });
 
 export function ThesisPerformanceChart({ thesisSlug, thesisName }: { thesisSlug: string; thesisName: string }) {
-  const [period, setPeriod] = useState<ChartPeriod>("1D");
+  const [period, setPeriod] = useState<ChartPeriod>("1W");
   const [data, setData] = useState<PerformanceResponse | null>(null);
   const [points, setPoints] = useState<ChartPoint[]>([]);
   const [status, setStatus] = useState<Status>("loading");
   const [error, setError] = useState("");
-  const [lastUpdate, setLastUpdate] = useState<number | null>(null);
-  const [liveReturn, setLiveReturn] = useState<number | null>(null);
   const lastUpdateRef = useRef<number | null>(null);
   const marksRef = useRef(new Map<string, ThesisIndexMark>());
   const basketRef = useRef<ThesisIndexConstituent[]>([]);
@@ -40,10 +38,9 @@ export function ThesisPerformanceChart({ thesisSlug, thesisName }: { thesisSlug:
     setData(result); setError(""); setStatus(result.status as Status);
     basketRef.current = result.basket; basePricesRef.current = result.basePrices;
     marksRef.current = new Map(Object.entries(result.currentPrices ?? {}));
-    setLiveReturn(result.currentReturn);
     const series = normalizeThesisIndexPoints(result.points ?? []);
     pointsRef.current = series; setPoints(series);
-    if (result.observedAt) { const timestamp = Date.parse(result.observedAt); lastUpdateRef.current = timestamp; setLastUpdate(timestamp); }
+    if (result.observedAt) lastUpdateRef.current = Date.parse(result.observedAt);
     return result;
   }, [period, thesisSlug]);
 
@@ -51,7 +48,7 @@ export function ThesisPerformanceChart({ thesisSlug, thesisName }: { thesisSlug:
     let disposed = false;
     let stopFeed: (() => void) | undefined;
     let updateTimer: ReturnType<typeof setTimeout> | undefined;
-    setStatus("loading"); setData(null); setPoints([]); setError(""); setLiveReturn(null); setLastUpdate(null);
+    setStatus("loading"); setData(null); setPoints([]); setError("");
     pointsRef.current = []; marksRef.current.clear(); basketRef.current = []; basePricesRef.current = {}; lastUpdateRef.current = null;
     const load = async () => {
       try {
@@ -59,7 +56,7 @@ export function ThesisPerformanceChart({ thesisSlug, thesisName }: { thesisSlug:
         if (disposed || !result.websocketUrl || !result.basket.length || !Object.keys(result.basePrices).length) return;
         stopFeed = managePacificaPriceFeed(result.websocketUrl, result.basket.map((asset) => asset.symbol), (symbol, point) => {
           marksRef.current.set(symbol, { price: String(point.value), timestamp: point.timestamp });
-          lastUpdateRef.current = point.timestamp; setLastUpdate(point.timestamp);
+          lastUpdateRef.current = point.timestamp;
           if (updateTimer) return;
           updateTimer = setTimeout(() => {
             updateTimer = undefined;
@@ -89,14 +86,9 @@ export function ThesisPerformanceChart({ thesisSlug, thesisName }: { thesisSlug:
     return [min - padding, max + padding] as [number, number];
   }, [points]);
   const historyVisible = Boolean(data?.historicalAvailable && points.length >= 2);
-  const live = status === "live" && lastUpdate !== null && !isPriceStale(lastUpdate);
-  const label = live ? "Live · Pacifica testnet" : status === "loading" ? "Loading" : status === "partial" ? "Partial prices" : status === "unavailable" ? "Unavailable" : status === "delayed" ? "Delayed" : "Delayed";
-
-  return <section className="market-chart-section thesis-performance-chart" aria-label={`${thesisName} target-weighted market return`}>
-    <div className="market-chart-head"><div><div className="eyebrow">THESIS MODEL · WEIGHTED MARKET RETURN</div><h2>{thesisName} <span>Target-weighted return · %</span></h2></div><div className="chart-live-status"><i className={`status-${live ? "live" : status}`}/>{label}</div></div>
-    <div className="market-chart-controls"><div className="thesis-performance-metric">Current target-weighted return{liveReturn === null ? <small>{data?.missingPriceSymbols?.length ? `Missing or stale prices: ${data.missingPriceSymbols.join(", ")}` : "Waiting for complete constituent prices"}</small> : <strong>{percent(liveReturn)}</strong>}<small>Published target weights × direction-adjusted price returns. No user fills, leverage, fees, funding, or rebalancing.</small></div><div className="period-controls" aria-label="Chart period">{PERIODS.map((item) => <button key={item} className={period === item ? "active" : ""} onClick={() => setPeriod(item)}>{item}</button>)}</div></div>
-    {historyVisible ? <div className="market-chart-value">{percent(points.at(-1)!.value)}<small>{new Date(points.at(-1)!.timestamp).toLocaleString()} · target-weighted model return</small></div> : <div className="market-chart-empty">{error || data?.historyMessage || (status === "loading" ? "Loading actual Pacifica candle history…" : "Historical constituent prices are unavailable for this period.")}</div>}
-    {historyVisible && <div className="chart-wrap market-chart-wrap chart-ready"><ResponsiveContainer width="100%" height="100%"><LineChart data={points} margin={{ top: 18, right: 5, bottom: 0, left: -12 }}><CartesianGrid vertical={false} stroke="#252b31" strokeDasharray="2 5"/><XAxis dataKey="timestamp" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={(value: number) => timeLabel(value, period)} axisLine={false} tickLine={false} tick={{ fill: "#77808b", fontSize: 10 }} minTickGap={32}/><YAxis orientation="right" domain={domain} tickFormatter={(value: number) => percent(value)} axisLine={false} tickLine={false} tick={{ fill: "#77808b", fontSize: 10 }} width={68} tickCount={4}/><Tooltip cursor={{ stroke: "#8c98aa", strokeDasharray: "3 4" }} contentStyle={{ background: "#11151a", border: "1px solid #303945", borderRadius: 5, fontSize: 11 }} labelFormatter={(value) => new Date(Number(value)).toLocaleString()} formatter={(value) => [percent(Number(value)), "Weighted return"]}/><Line type="monotone" dataKey="value" stroke="#729cff" strokeWidth={2} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} style={{ filter: "drop-shadow(0 0 4px #729cff99)" }}/></LineChart></ResponsiveContainer></div>}
-    <div className="chart-foot"><span>{lastUpdate ? `Last successful update ${new Date(lastUpdate).toLocaleTimeString()}` : "No successful market-data update yet"}</span><span>{label.toUpperCase()}</span></div>
+  return <section className="market-chart-section thesis-performance-chart" aria-label={`${thesisName} performance chart`}>
+    <div className="market-chart-controls"><div className="period-controls" aria-label="Chart period">{PERIODS.map((item) => <button key={item} className={period === item ? "active" : ""} onClick={() => setPeriod(item)}>{item}</button>)}</div></div>
+    {!historyVisible && <div className="market-chart-empty">{error || data?.historyMessage || (status === "loading" ? "Loading actual Pacifica candle history…" : "Historical constituent prices are unavailable for this period.")}</div>}
+    {historyVisible && <div className="chart-wrap market-chart-wrap chart-ready"><ResponsiveContainer width="100%" height="100%"><LineChart data={points} margin={{ top: 18, right: 5, bottom: 0, left: -12 }}><CartesianGrid vertical={false} stroke="#252b31" strokeDasharray="2 5"/><XAxis dataKey="timestamp" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={(value: number) => timeLabel(value, period)} axisLine={false} tickLine={false} tick={{ fill: "#77808b", fontSize: 10 }} minTickGap={32}/><YAxis orientation="right" domain={domain} tickFormatter={(value: number) => percent(value)} axisLine={false} tickLine={false} tick={{ fill: "#77808b", fontSize: 10 }} width={68} tickCount={4}/><Tooltip cursor={{ stroke: "#8c98aa", strokeDasharray: "3 4" }} contentStyle={{ background: "#11151a", border: "1px solid #303945", borderRadius: 5, fontSize: 11 }} labelFormatter={(value) => new Date(Number(value)).toLocaleString()} formatter={(value) => [percent(Number(value)), "Weighted return"]}/><Line type="monotone" dataKey="value" stroke="#f5f7fa" strokeWidth={2} dot={false} activeDot={{ r: 3, fill: "#fff", stroke: "#fff" }} isAnimationActive={false}/></LineChart></ResponsiveContainer></div>}
   </section>;
 }

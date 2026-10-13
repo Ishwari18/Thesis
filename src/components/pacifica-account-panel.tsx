@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { MarketIdentity } from "./market-identity";
 
 type Position = {
   symbol: string;
@@ -144,7 +145,7 @@ export function PacificaAccountPanel() {
               payload.positions.map((position) => (
                 <div className="portfolio-leg" key={position.symbol}>
                   <span>
-                    <strong>{position.symbol}</strong>{" "}
+                    <MarketIdentity symbol={position.symbol} variant="compact" />{" "}
                     <small>{position.direction.toUpperCase()}</small>
                   </span>
                   <span>Quantity {position.quantity}</span>

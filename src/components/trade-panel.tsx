@@ -7,13 +7,13 @@ import { ChevronDown, Info, ShieldAlert } from "lucide-react";
 import { usePrivy } from "@privy-io/react-auth";
 import type { Thesis } from "@/lib/types";
 import type { LiveAllocationContext } from "@/server/services/allocation";
-import { minimumCollateral, previewAllocation } from "@/server/services/allocation";
+import { previewAllocation } from "@/server/services/allocation";
 import { safeAuthRedirectPath } from "@/lib/supabase/redirect";
-import { abbreviatedAddress } from "@/lib/auth/profile";
 import { canSubmitTrade } from "@/lib/trading/readiness";
 import { connectAndLinkPhantom, signPacificaActionWithPhantom, signThesisTradeApprovalWithPhantom } from "@/lib/auth/phantom-connection";
 import { ensureThesisSession } from "@/lib/auth/session";
 import type { ThesisTradeApproval } from "@/lib/trading/trade-approval";
+import { MarketIdentity } from "./market-identity";
 
 type MarketResponse = {
   mode: "loading" | "live-testnet" | "error";
@@ -63,8 +63,8 @@ export function TradePanel({ thesis }: { thesis: Thesis }) {
   const isAuthReady = authReady && (authenticated || appSession !== null);
   const connectedPhantom = phantomAddress ? { address: phantomAddress } : null;
   const walletMatchesAccount = Boolean(phantomAddress);
-  // This integration sends requests only to Pacifica's configured testnet API.
   const testnetVerified = accountState.mode === "ready" && agentState.mode === "ready";
+  // This integration sends requests only to Pacifica's configured testnet API.
   const symbols = useMemo(() => thesis.assets.map((asset) => asset.symbol), [thesis.assets]);
 
   useEffect(() => {
@@ -114,12 +114,6 @@ export function TradePanel({ thesis }: { thesis: Thesis }) {
     assets: thesis.assets.map((asset) => ({ ...asset, direction: side === "short" ? opposite(asset.direction) : asset.direction })),
   };
   const preview = previewAllocation(selectedThesis, amount, leverage, live);
-  const minimum = marketDataReady
-    ? thesis.assets.reduce((max, asset) => {
-      const market = live!.markets.find((row) => row.symbol === asset.symbol)!;
-      return Math.max(max, Number(minimumCollateral(market.minNotional, leverage, asset.weight)));
-    }, 0)
-    : null;
   const leverageBlocked = cap > 0 && leverage > cap;
   const disabled = !marketDataReady || !preview.valid || leverageBlocked || loading;
 
@@ -162,7 +156,6 @@ export function TradePanel({ thesis }: { thesis: Thesis }) {
   }, [isAuthReady, isAuthenticated, phantomAddress]);
 
   const availableCollateral = Number(accountState.account?.availableBalance);
-  const hasFunding = accountState.mode === "ready" && Number.isFinite(availableCollateral) && Number(amount) <= availableCollateral;
   const readinessReady = canSubmitTrade({
     authenticated: isAuthReady && isAuthenticated,
     phantomConnected: Boolean(connectedPhantom),
@@ -194,29 +187,59 @@ export function TradePanel({ thesis }: { thesis: Thesis }) {
     try {
       await ensureThesisSession(await getAccessToken());
       setAppSession(true);
-      setPhantomAddress(await connectAndLinkPhantom());
+      const address = await connectAndLinkPhantom();
+      setPhantomAddress(address);
       router.refresh();
+      return address;
     }
     catch (error) { setWalletMessage(error instanceof Error ? error.message : "Phantom connection failed."); }
     finally { setWalletConnecting(false); }
   }
 
-  async function enableTradeAgent() {
-    if (!phantomAddress || !agentState.agentAddress || agentConnecting) return;
+  async function enableTradeAgent(address = phantomAddress) {
+    if (!address || agentConnecting) return;
     setAgentConnecting(true);
     setWalletMessage("");
     try {
-      const action = await signPacificaActionWithPhantom("bind_agent_wallet", { agent_wallet: agentState.agentAddress }, phantomAddress);
+      let agentAddress = agentState.agentAddress;
+      if (!agentAddress || agentState.mode === "loading" || agentState.mode === "idle") {
+        const check = await fetch("/api/pacifica/agent", { cache: "no-store" });
+        const current = await check.json() as AgentResponse;
+        if (!check.ok) throw new Error(current.error ?? "Trade-agent setup could not be checked.");
+        if (current.bound) {
+          setAgentState({ mode: "ready", agentAddress: current.agentAddress });
+          setWalletMessage("");
+          return;
+        }
+        agentAddress = current.agentAddress;
+      }
+      if (!agentAddress) throw new Error("THESIS could not load the trade-agent address.");
+      setAgentState({ mode: "unbound", agentAddress });
+      const action = await signPacificaActionWithPhantom("bind_agent_wallet", { agent_wallet: agentAddress }, address);
       const response = await fetch("/api/pacifica/agent", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(action) });
       const data = await response.json() as AgentResponse;
       if (!response.ok || data.bound !== true) throw new Error(data.error ?? "Pacifica did not confirm the trade-agent setup.");
       setAgentState({ mode: "ready", agentAddress: data.agentAddress });
-      setWalletMessage("One-confirmation trading is enabled. You can revoke the trade-only agent from Pacifica.");
+      setWalletMessage("");
     } catch (error) {
       setWalletMessage(error instanceof Error ? error.message : "Trade-agent setup failed.");
     } finally {
       setAgentConnecting(false);
     }
+  }
+
+  async function selectSide(nextSide: "long" | "short") {
+    setSide(nextSide);
+    setReviewing(false);
+    setResult(null);
+    setActionMessage("");
+    if (!isAuthReady || !isAuthenticated) {
+      setWalletMessage("Sign in before connecting and authorizing a wallet.");
+      return;
+    }
+    let address = phantomAddress;
+    if (!address) address = await connectPhantom() ?? null;
+    if (address) await enableTradeAgent(address);
   }
 
   async function openPosition() {
@@ -264,7 +287,8 @@ export function TradePanel({ thesis }: { thesis: Thesis }) {
   }
 
   return <aside className="trade-panel">
-    <div className="panel-head"><div><div className="eyebrow">PACIFICA TESTNET</div><h2>Open thesis position</h2></div><span className="demo-tag">TESTNET</span></div>
+    <div className="panel-head"><div>
+</div></div>
     {isAuthReady && isAuthenticated && <>
     <div className="field-label">Collateral <span>USD</span></div>
     <div className="amount-input"><span>$</span><input inputMode="decimal" value={amount} onChange={(event) => { setAmount(event.target.value); setReviewing(false); setResult(null); setActionMessage(""); }} aria-label="Collateral amount" /></div>
@@ -275,19 +299,13 @@ export function TradePanel({ thesis }: { thesis: Thesis }) {
       <div className="readiness-step"><span className="readiness-number">A</span><div><strong>Authentication required</strong><p>Sign in before opening an order form. Thesis details remain available while logged out.</p></div></div>
       <Link className="primary-trade readiness-link" href={logInHref}>Log in to trade</Link>
     </div> : <>
-    <div className="trading-readiness" aria-label="Trading readiness">
-      <div className="readiness-step readiness-complete"><span className="readiness-number">A</span><div><strong>Authentication verified</strong><p>Signed in through Privy.</p></div></div>
-      <div className={`readiness-step ${walletMatchesAccount && testnetVerified ? "readiness-complete" : ""}`}><span className="readiness-number">B</span><div><strong>{walletMatchesAccount ? `Phantom · ${abbreviatedAddress(connectedPhantom!.address)}` : "Connect Phantom"}</strong><p>{walletConnecting ? "Waiting for Phantom approval…" : walletMatchesAccount ? agentState.mode === "ready" ? "Wallet linked. A revocable trade-only agent handles Pacifica’s per-leg signatures; Phantom will ask you once for each reviewed thesis trade." : "Wallet ownership verified. Enable THESIS’s trade-only Pacifica agent once; then Phantom will ask you once for each reviewed thesis trade." : "Connect and link your Phantom Solana wallet."}</p>{!walletMatchesAccount && <button className="readiness-action" disabled={walletConnecting} onClick={connectPhantom}>{walletConnecting ? "Connecting…" : "Connect Phantom"}</button>}{walletMatchesAccount && agentState.mode === "loading" && <p role="status">Checking one-confirmation trading setup…</p>}{walletMatchesAccount && agentState.mode === "unbound" && <button className="readiness-action" disabled={agentConnecting} onClick={enableTradeAgent}>{agentConnecting ? "Waiting for Phantom…" : "Enable one-confirmation trading"}</button>}{walletMatchesAccount && agentState.mode === "error" && <p className="wallet-menu-error" role="alert">{agentState.message}</p>}{walletMessage && <p className="wallet-menu-error" role="status">{walletMessage}{walletMessage.includes("isn't available") && <> <a href="https://phantom.com/download" target="_blank" rel="noreferrer">Install Phantom</a></>}</p>}</div></div>
-      <div className={`readiness-step ${hasFunding ? "readiness-complete" : ""}`}><span className="readiness-number">C</span><div><strong>Pacifica testnet collateral</strong>{accountState.mode === "loading" ? <p role="status">Verifying collateral from your linked Pacifica testnet account…</p> : accountState.mode === "error" ? <p role="alert">{accountState.message}</p> : accountState.mode === "ready" && Number.isFinite(availableCollateral) ? <><p>Pacifica available collateral: <b>${availableCollateral.toFixed(2)}</b> · wallet balance is separate.</p>{!hasFunding && <><p>Fund your own Pacifica testnet trading account before opening a position. Deposit transactions are not configured in THESIS yet.</p><button type="button" className="readiness-action" disabled>Deposit testnet funds · not configured</button></>}</> : <p>Connect Phantom to check the linked Pacifica testnet account balance.</p>}</div></div>
-      <div className={`readiness-step ${readinessReady ? "readiness-complete" : ""}`}><span className="readiness-number">D</span><div><strong>{readinessReady ? "Ready to review" : "Trading checks pending"}</strong><p>Orders require your linked Phantom wallet, enabled trade-only agent, your own Pacifica testnet collateral, fresh prices, and one wallet approval for the reviewed thesis trade.</p></div></div>
-    </div>
     {showInfo && <div className="inline-info">The highest leverage is capped by the least leveraged market in this thesis. Orders are sent to Pacifica testnet.</div>}
-    <div className="field-label">Side</div>
-    <div className="leverage-options"><button className={side === "long" ? "selected" : ""} disabled={loading} onClick={() => { setSide("long"); setReviewing(false); setResult(null); }}>Go long</button><button className={side === "short" ? "selected" : ""} disabled={loading} onClick={() => { setSide("short"); setReviewing(false); setResult(null); }}>Go short</button></div>
+    
+    <div className="leverage-options"><button className={side === "long" ? "selected" : ""} disabled={loading || walletConnecting || agentConnecting} onClick={() => void selectSide("long")}>{walletConnecting ? "Connect Phantom…" : agentConnecting ? "Authorize in Phantom…" : "Go long"}</button><button className={side === "short" ? "selected" : ""} disabled={loading || walletConnecting || agentConnecting} onClick={() => void selectSide("short")}>{walletConnecting ? "Connect Phantom…" : agentConnecting ? "Authorize in Phantom…" : "Go short"}</button></div>
     <div className="exposure-line"><span>Approx. exposure</span><strong>${preview.exposure ?? "0.00"}</strong></div>
-    <div className="minimum-note"><Info size={13} /><span>{minimum === null ? "Minimum collateral requires fresh Pacifica market data." : `Minimum collateral at ${leverage}x: $${minimum.toFixed(2)}`}</span></div>
+    {walletMessage && <div className="inline-info" role="alert">{walletMessage}{walletMessage.includes("isn't available") && <> <a href="https://phantom.com/download" target="_blank" rel="noreferrer">Install Phantom</a></>}</div>}
     <button className="allocation-toggle" onClick={() => setExpanded(!expanded)}><span>Allocation preview <small>{thesis.assets.length} assets</small></span><ChevronDown size={15} className={expanded ? "rotated" : ""} /></button>
-    {expanded && <div className="allocation-legs">{preview.legs.map((leg) => <div className="allocation-leg" key={leg.symbol}><span className="leg-symbol">{leg.symbol}</span><span className="leg-weight">{(Number(leg.weight) * 100).toFixed(0)}%</span><strong>${leg.notional ?? leg.targetNotional}</strong>{leg.quantity && <small className="leg-quantity">{leg.quantity} units</small>}{!leg.eligible && <small className="leg-warning">Min ${leg.minimum}</small>}</div>)}</div>}
+    {expanded && <div className="allocation-legs">{preview.legs.map((leg) => <div className="allocation-leg" key={leg.symbol}><span className="leg-symbol"><MarketIdentity symbol={leg.symbol} variant="compact" /></span><span className="leg-weight">{(Number(leg.weight) * 100).toFixed(0)}%</span><strong>${leg.notional ?? leg.targetNotional}</strong>{leg.quantity && <small className="leg-quantity">{leg.quantity} units</small>}{!leg.eligible && <small className="leg-warning">Min ${leg.minimum}</small>}</div>)}</div>}
     {marketResponse.mode === "loading" && <div className="inline-info" role="status">Loading fresh Pacifica markets and prices…</div>}
     {marketResponse.mode === "error" && <div className="warning-box" role="alert"><ShieldAlert size={14} /><span>{marketResponse.message} Trading is disabled until live data is available.</span></div>}
     {marketDataReady && preview.error && <div className="warning-box"><ShieldAlert size={14} /><span>{preview.error}</span></div>}
@@ -296,10 +314,9 @@ export function TradePanel({ thesis }: { thesis: Thesis }) {
     {!reviewing && !result && <button className="primary-trade" disabled={loading} onClick={() => setReviewing(true)}>{`Review ${side === "long" ? "long" : "short"}`}</button>}
     {reviewing && <div className="inline-info" role="group" aria-label="Confirm thesis order"><strong>Review {side} position</strong><p>${amount} collateral at {leverage}x, approximately ${preview.exposure} exposure across {thesis.assets.length} legs. {readinessReady ? "Confirm opens Phantom once to approve the complete thesis trade; THESIS submits the signed market legs together." : "This is a preview only. Confirm is disabled until the pending trading checks above pass."}</p><button className="primary-trade" disabled={disabled || !readinessReady} onClick={openPosition}>{loading ? (actionMessage.startsWith("Approve") ? "Waiting for Phantom…" : "Submitting…") : `Confirm and go ${side}`}</button><button className="portfolio-discover" disabled={loading} onClick={() => setReviewing(false)}>Back</button></div>}
     {actionMessage && <div className="inline-info" role={result?.status === "submission_unknown" ? "alert" : "status"}>{actionMessage}{actionMessage.includes("Sign in") && <> <Link href={logInHref}>Sign in</Link></>}{result?.providerCode !== undefined && <div>Pacifica error code: {result.providerCode}{result.providerHttpStatus ? ` (HTTP ${result.providerHttpStatus})` : ""}{result.providerMessage ? ` — ${result.providerMessage}` : ""}</div>}</div>}
-    {result?.results?.length ? <div className="portfolio-legs" aria-label="Per-leg trade results">{result.results.map((row) => <div className="portfolio-leg" key={row.symbol}><span><strong>{row.symbol}</strong></span><span>{row.status.replaceAll("_", " ")}</span><span>{row.fillQuantity ? `${row.fillQuantity} filled` : row.quantity ?? "—"}</span><span>{row.fillPrice ? `Fill $${row.fillPrice}` : row.status === "accepted_unconfirmed" ? "Fill unconfirmed" : "—"}</span></div>)}</div> : null}
+    {result?.results?.length ? <div className="portfolio-legs" aria-label="Per-leg trade results">{result.results.map((row) => <div className="portfolio-leg" key={row.symbol}><span><MarketIdentity symbol={row.symbol} variant="compact" /></span><span>{row.status.replaceAll("_", " ")}</span><span>{row.fillQuantity ? `${row.fillQuantity} filled` : row.quantity ?? "—"}</span><span>{row.fillPrice ? `Fill $${row.fillPrice}` : row.status === "accepted_unconfirmed" ? "Fill unconfirmed" : "—"}</span></div>)}</div> : null}
     {result?.allocationId && <Link className="portfolio-discover" href="/portfolio">View Portfolio</Link>}
     {result?.leverageVerification?.verified === false && <div className="warning-box" role="alert">Observed implied leverage was {result.leverageVerification.impliedLeverage}x; expected {result.leverageVerification.expectedLeverage}x. Review the exchange account before opening another trade.</div>}
-    <p className="trade-disclaimer">Orders go only to Pacifica testnet for the linked wallet. THESIS never receives your main wallet private key. The revocable trade-only agent signs each Pacifica order after Phantom approves the exact reviewed thesis trade.</p>
     </>}
   </aside>;
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { MarketIdentity } from "./market-identity";
 
 export type PortfolioLegView = {
   id: string;
@@ -106,7 +107,7 @@ export function PortfolioAllocationCard({ initial }: { initial: PortfolioAllocat
     <div className="portfolio-status-row"><span className="portfolio-status">{card.side.toUpperCase()}</span>{card.badges.map((badge) => <span className="portfolio-status" key={badge}>{badge}</span>)}</div>
     <div className="portfolio-metrics"><span>Collateral <strong>{usd(card.collateral)}</strong></span><span>Leverage <strong>{card.leverage}x</strong></span><span>Exposure <strong>{usd(card.exposure)}</strong></span><span>{card.status === "closed" ? "Realized P&L" : "Thesis P&L"} <strong>{usd(card.pnl)}{card.pnlPercent !== null ? ` (${Number(card.pnlPercent).toFixed(2)}%)` : ""}</strong></span></div>
     <div className="portfolio-legs">{card.legs.length ? card.legs.map((leg) => <div className="portfolio-leg" key={leg.id}>
-      <span><strong>{leg.symbol}</strong> <small>{leg.direction.toUpperCase()} · {(Number(leg.targetWeight) * 100).toFixed(1)}%</small></span>
+      <span><MarketIdentity symbol={leg.symbol} variant="compact" /> <small>{leg.direction.toUpperCase()} · {(Number(leg.targetWeight) * 100).toFixed(1)}%</small></span>
       <span>Qty {leg.filledQuantity || "—"}{Number(leg.closedQuantity) > 0 ? ` · closed ${leg.closedQuantity}` : ""}</span>
       <span>Entry {usd(leg.entryPrice)}</span>
       <span>Mark {usd(leg.markPrice)}</span>
@@ -116,7 +117,7 @@ export function PortfolioAllocationCard({ initial }: { initial: PortfolioAllocat
     {message && <p className="inline-info" role={needsReconcile ? "alert" : "status"}>{message}</p>}
     {!!closeResults?.length && <div className="portfolio-legs" aria-label="Close order results">
       {closeResults.map((order, index) => <div className="portfolio-leg" key={`${order.symbol}-${index}`}>
-        <strong>{order.symbol}</strong><span>{order.side?.toUpperCase() ?? "CLOSE"}</span><span>{order.quantity ?? "—"} units</span><span>{order.status === "filled" && order.fillPrice ? `Filled at ${usd(order.fillPrice)}` : order.status.replaceAll("_", " ")}</span>
+        <span><MarketIdentity symbol={order.symbol} variant="compact" /></span><span>{order.side?.toUpperCase() ?? "CLOSE"}</span><span>{order.quantity ?? "—"} units</span><span>{order.status === "filled" && order.fillPrice ? `Filled at ${usd(order.fillPrice)}` : order.status.replaceAll("_", " ")}</span>
       </div>)}
     </div>}
     {isOpen && <div className="portfolio-actions">
@@ -126,7 +127,7 @@ export function PortfolioAllocationCard({ initial }: { initial: PortfolioAllocat
     {closeReview && <div className="trade-confirm" role="dialog" aria-modal="true" aria-labelledby={`close-title-${card.id}`}>
       <div className="eyebrow">REDUCE ONLY · PACIFICA TESTNET</div><h3 id={`close-title-${card.id}`}>Review exact close orders</h3>
       <p>These orders close only the remaining quantities recorded for this thesis.</p>
-      <div className="portfolio-legs">{closeOrders.map((order) => <div className="portfolio-leg" key={order.symbol}><strong>{order.symbol}</strong><span>{order.side.toUpperCase()}</span><span>{order.quantity} units</span><span>Reduce only</span></div>)}</div>
+      <div className="portfolio-legs">{closeOrders.map((order) => <div className="portfolio-leg" key={order.symbol}><span><MarketIdentity symbol={order.symbol} variant="compact" /></span><span>{order.side.toUpperCase()}</span><span>{order.quantity} units</span><span>Reduce only</span></div>)}</div>
       <div className="portfolio-actions"><button type="button" className="primary-trade" disabled={busy} onClick={close}>{busy ? "Submitting…" : "Confirm close"}</button><button type="button" className="portfolio-discover" disabled={busy} onClick={() => setCloseReview(false)}>Cancel</button></div>
     </div>}
     <p className="portfolio-note">Exchange net positions are shared across theses. This card displays only the quantities and P&amp;L recorded for this allocation.</p>

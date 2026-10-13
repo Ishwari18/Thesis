@@ -1,29 +1,34 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronRight } from "lucide-react";
+import Image from "next/image";
+import { ArrowLeft } from "lucide-react";
 import type { Thesis } from "@/lib/types";
+import { THESIS_COVER_IMAGES } from "@/lib/thesis-covers";
 import { TradePanel } from "./trade-panel";
 import { ThesisPerformanceChart } from "./thesis-performance-chart";
 
 export function ThesisDetail({ thesis: t }: { thesis: Thesis }) {
-  const [mandate, setMandate] = useState(false);
-  const [allAssets, setAllAssets] = useState(false);
-  const [activeTab, setActiveTab] = useState("Overview");
-  const assets = allAssets ? t.assets : t.assets.slice(0, 4);
   return <>
     <div className="back-line"><Link href="/discover"><ArrowLeft size={14}/> All theses</Link><span>THESIS / {t.name.toUpperCase()}</span></div>
     <div className="detail-grid"><div className="detail-main">
-      <section className="detail-intro"><div className="thesis-avatar large" style={{ "--avatar": t.color } as React.CSSProperties}>{t.initials}</div><div><div className="eyebrow">{t.category.toUpperCase()} · THESIS</div><h1>{t.name}</h1><p>{t.summary}</p></div></section>
+      <section className="detail-intro"><div className="thesis-avatar large thesis-detail-avatar" style={{ "--avatar": t.color } as React.CSSProperties}>{THESIS_COVER_IMAGES[t.slug] ? <Image src={THESIS_COVER_IMAGES[t.slug]} alt="" width={44} height={44} unoptimized aria-hidden="true" /> : t.initials}</div><div><h1>{t.name}</h1><p>{t.summary}</p></div></section>
       <ThesisPerformanceChart thesisSlug={t.slug} thesisName={t.name}/>
-      <div className="detail-tabs">{["Overview", "Activity", "Rebalances"].map((tab) => <button key={tab} onClick={() => setActiveTab(tab)} className={activeTab === tab ? "active" : ""}>{tab}</button>)}</div>
-      {activeTab === "Overview" ? <>
-        <section className="content-section idea-section"><div className="section-kicker">IDEA <span>01</span></div><div><h2>Why this thesis</h2><p>{t.idea}</p><button className="mandate-toggle" onClick={() => setMandate(!mandate)}>{mandate ? "Close working mandate" : "Read the working mandate"}<ChevronRight size={14} className={mandate ? "down" : ""}/></button>{mandate && <div className="mandate-copy">{t.mandate.split("\n\n").map((p, i) => <p key={i}>{p}</p>)}</div>}</div></section>
-        <section className="content-section how-section"><div className="section-kicker">HOW IT<br/>WORKS <span>02</span></div><div><h2>Operating details</h2>{[["Tracks", t.tracks], ["Rebalancing", t.rebalancing], ["Posture", t.posture], ["Leverage model", t.leverageModel], ["Coverage", t.coverage]].filter(([, value]) => value).map(([key, value]) => <div className="fact-row" key={key}><span>{key}</span><strong>{value}</strong></div>)}</div></section>
-        <section className="content-section holdings-section"><div className="section-kicker">HOLDINGS <span>03</span></div><div><div className="holdings-title"><div><h2>Target composition</h2><p>Illustrative weights · not live positions</p></div><button onClick={() => setAllAssets(!allAssets)}>{allAssets ? "Show less" : "Show all"}</button></div><div className="allocation-bar">{t.assets.map((asset) => <span key={asset.symbol} style={{ width: `${Number(asset.weight) * 100}%`, background: asset.color }} title={`${asset.symbol} ${(Number(asset.weight) * 100).toFixed(0)}%`}/>)}</div><div className="holdings-list">{assets.map((asset) => <div className="holding-row" key={asset.symbol}><span className="holding-name"><i style={{ background: asset.color }}/>{asset.symbol}<small>{asset.direction}</small></span><span className="holding-pct">{(Number(asset.weight) * 100).toFixed(0)}%</span><span className="holding-min">Market min ${asset.minNotional}</span></div>)}</div></div></section>
-      </> : <section className="sample-activity"><h2>{activeTab === "Activity" ? "No thesis activity history" : "No rebalances recorded"}</h2><p>{activeTab === "Activity" ? "The available records do not provide a complete, attributed thesis activity timeline." : "No rebalancing events are recorded for this thesis."}</p></section>}
-      <div className="accounting-note">Target composition describes the thesis model. Personal positions and P&amp;L are accounted separately.</div>
+      <div className="detail-tabs"><span className="active overview-tab">Overview</span></div>
+        <section className="target-composition-section"><div className="target-composition-heading"><h2>Target composition</h2><p>Illustrative target weights · not live positions</p></div><div className="target-composition-content"><svg className="target-composition-donut" viewBox="0 0 220 220" role="img" aria-label={`Target composition across ${t.assets.length} assets`}>
+          {(() => {
+            const total = t.assets.reduce((sum, asset) => sum + Math.max(0, Number(asset.weight)), 0);
+            const circumference = 2 * Math.PI * 80;
+            let offset = 0;
+            return t.assets.map((asset) => {
+              const fraction = total > 0 ? Math.max(0, Number(asset.weight)) / total : 0;
+              const length = Math.max(0, fraction * circumference - 1.5);
+              const circle = <circle key={asset.symbol} cx="110" cy="110" r="80" fill="none" stroke={asset.color} strokeWidth="40" strokeDasharray={`${length} ${circumference - length}`} strokeDashoffset={-offset} transform="rotate(-90 110 110)" />;
+              offset += fraction * circumference;
+              return circle;
+            });
+          })()}
+        </svg><div className="target-composition-legend">{t.assets.map((asset) => <div className="target-composition-item" key={asset.symbol}><i style={{ background: asset.color }}/><span>{asset.symbol}</span><strong>{(Number(asset.weight) * 100).toFixed(Number(asset.weight) * 100 % 1 === 0 ? 0 : 1)}%</strong></div>)}</div></div></section>
     </div><TradePanel thesis={t}/></div>
   </>;
 }

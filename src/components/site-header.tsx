@@ -1,17 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ChevronDown, Search, Wallet } from "lucide-react";
-import { useActiveWallet, usePrivy } from "@privy-io/react-auth";
+import { ChevronDown, Wallet } from "lucide-react";
+import { useActiveWallet, useLogin, usePrivy } from "@privy-io/react-auth";
 import { abbreviatedAddress, getPrivyProfile } from "@/lib/auth/profile";
-import { connectAndLinkPhantom, disconnectInjectedPhantom } from "@/lib/auth/phantom-connection";
+import { connectAndLinkPhantom, connectInjectedPhantom, disconnectInjectedPhantom } from "@/lib/auth/phantom-connection";
 import { ensureThesisSession } from "@/lib/auth/session";
-
-function authHref(next: string) {
-  return `/auth?next=${encodeURIComponent(next.startsWith("/") && !next.startsWith("//") ? next : "/discover")}`;
-}
 
 export function SiteHeader() {
   const router = useRouter();
@@ -20,9 +17,24 @@ export function SiteHeader() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [walletError, setWalletError] = useState("");
   const [phantomAddress, setPhantomAddress] = useState<string | null>(null);
+  const [pendingPhantomAddress, setPendingPhantomAddress] = useState<string | null>(null);
   const [appSession, setAppSession] = useState<boolean | null>(null);
+  const [signInError, setSignInError] = useState("");
   const profile = getPrivyProfile(user);
   const isAuthenticated = authenticated || appSession === true;
+
+  const { login } = useLogin({
+    onComplete: async () => {
+      setSignInError("");
+      try {
+        await ensureThesisSession(await getAccessToken());
+        setAppSession(true);
+        router.refresh();
+      } catch (error) {
+        setSignInError(error instanceof Error ? error.message : "THESIS could not verify your session.");
+      }
+    },
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -64,9 +76,17 @@ export function SiteHeader() {
     }
   }
 
+  async function connectWalletBeforeSignIn() {
+    setWalletError("");
+    try {
+      setPendingPhantomAddress(await connectInjectedPhantom());
+    } catch (error) {
+      setWalletError(error instanceof Error ? error.message : "Phantom could not be connected.");
+    }
+  }
+
   return <header className="site-header">
-    <Link href="/discover" className="wordmark">THESIS<span className="wordmark-mark">/</span></Link>
-    <label className="global-search"><Search size={15} /><input aria-label="Search theses" placeholder="What do you want to trade?" onKeyDown={e => { if (e.key === "Enter") { const q = (e.currentTarget as HTMLInputElement).value; location.href = `/discover?q=${encodeURIComponent(q)}`; } }} /><kbd>⌘ K</kbd></label>
+    <Link href="/discover" className="wordmark"><Image src="/images/thesis-mark.jpg" alt="" width={26} height={26} unoptimized aria-hidden="true" /><span>THESIS</span></Link>
     <div className="header-right">
       {ready && (authenticated || appSession === true) ? <div className="profile-menu-wrap">
         <button className="profile-trigger" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>
@@ -82,8 +102,14 @@ export function SiteHeader() {
           <button role="menuitem" onClick={async () => { await logout(); await fetch("/api/auth/privy-session", { method: "DELETE" }); setAppSession(false); setPhantomAddress(null); setMenuOpen(false); router.refresh(); }}>Log out</button>
         </div>}
       </div> : <>
-        <Link href="/portfolio" className="portfolio-nav">Portfolio</Link>
-        {ready && appSession !== null ? <Link className="wallet-button" href={authHref(typeof window === "undefined" ? "/discover" : `${location.pathname}${location.search}`)}><span>Log in</span></Link> : <span className="wallet-button auth-loading" aria-label="Checking authentication" aria-busy="true">Checking…</span>}
+        <div className="header-auth-actions">
+          <button className="header-sign-in" type="button" onClick={() => { setSignInError(""); login(); }}>Sign in</button>
+          <button className="header-wallet-connect" type="button" onClick={connectWalletBeforeSignIn} aria-label={pendingPhantomAddress ? `Phantom connected, ${abbreviatedAddress(pendingPhantomAddress)}` : "Connect Phantom wallet"} title={pendingPhantomAddress ? `Phantom connected · ${abbreviatedAddress(pendingPhantomAddress)}. Sign in to link it.` : "Connect Phantom wallet"}>
+            <Wallet size={17} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+          {signInError && <span className="header-wallet-error" role="alert">{signInError}</span>}
+          {walletError && <span className="header-wallet-error" role="alert">{walletError}</span>}
+        </div>
       </>}
     </div>
   </header>;

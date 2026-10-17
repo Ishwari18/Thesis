@@ -21,8 +21,9 @@ const timeLabel = (timestamp: number, period: ChartPeriod) => period === "1D"
 export function ThesisPerformanceChart({ thesisSlug, thesisName }: { thesisSlug: string; thesisName: string }) {
   const [period, setPeriod] = useState<ChartPeriod>("1W");
   const [data, setData] = useState<PerformanceResponse | null>(null);
-  const [points, setPoints] = useState<ChartPoint[]>([]);
-  const [status, setStatus] = useState<Status>("loading");
+ const [points, setPoints] = useState<ChartPoint[]>([]);
+const [liveReturn, setLiveReturn] = useState<number | null>(null);
+const [status, setStatus] = useState<Status>("loading");
   const [error, setError] = useState("");
   const lastUpdateRef = useRef<number | null>(null);
   const marksRef = useRef(new Map<string, ThesisIndexMark>());

@@ -20,16 +20,49 @@ const bindSchema = z.object({
 
 export async function GET() {
   const appUser = await getAppUser();
-  if (!appUser) return NextResponse.json({ error: "Sign in to configure one-confirmation trading." }, { status: 401 });
+
+  if (!appUser) {
+    return NextResponse.json(
+      { error: "Sign in to configure one-confirmation trading." },
+      { status: 401 },
+    );
+  }
+
   const accountAddress = await getLinkedSolanaWallet(appUser.userId);
-  if (!accountAddress) return NextResponse.json({ error: "Connect and link Phantom first." }, { status: 403 });
+
+  if (!accountAddress) {
+    return NextResponse.json(
+      { error: "Connect and link Phantom first." },
+      { status: 403 },
+    );
+  }
+
   try {
-    const db = adminClient();
-    const agent = derivePacificaTradeAgent(appUser.userId, accountAddress);
-    const bound = await getBoundPacificaTradeAgent(db, appUser.userId, accountAddress);
-    return NextResponse.json({ accountAddress, agentAddress: agent.agentAddress, bound: Boolean(bound) });
+    const db = adminClient() as unknown as Parameters<
+      typeof getBoundPacificaTradeAgent
+    >[0];
+
+    const agent = derivePacificaTradeAgent(
+      appUser.userId,
+      accountAddress,
+    );
+
+    const bound = await getBoundPacificaTradeAgent(
+      db,
+      appUser.userId,
+      accountAddress,
+    );
+
+    return NextResponse.json({
+      accountAddress,
+      agentAddress: agent.agentAddress,
+      bound: Boolean(bound),
+    });
   } catch (error) {
-    return NextResponse.json({ error: safePacificaMessage(error) }, { status: 503 });
+    return NextResponse.json(
+      { error: safePacificaMessage(error) },
+      { status: 503 },
+    );
   }
 }
 

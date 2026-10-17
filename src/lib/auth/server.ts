@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { PrivyClient } from "@privy-io/server-auth";
 import { createClient } from "@supabase/supabase-js";
 
-const privy = new PrivyClient(process.env.NEXT_PUBLIC_PRIVY_APP_ID!, process.env.PRIVY_APP_SECRET!);
+const privy = new PrivyClient(process.env.PRIVY_APP_ID!, process.env.PRIVY_APP_SECRET!);
 
 // Server only. Bypasses RLS, so every query must filter by the verified user id.
 export const adminClient = () =>

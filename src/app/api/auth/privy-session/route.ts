@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const token = (await cookies()).get("privy-token")?.value;
-  const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
+  const appId = process.env.PRIVY_APP_ID;
   const appSecret = process.env.PRIVY_APP_SECRET;
   let authenticated = false;
   if (token && appId && appSecret) {
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
   const match = authorization?.match(/^Bearer\s+(.+)$/i);
   const token = match?.[1];
   if (!token) return NextResponse.json({ error: "A Privy access token is required." }, { status: 401 });
-  const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
+  const appId = process.env.PRIVY_APP_ID;
   const appSecret = process.env.PRIVY_APP_SECRET;
   if (!appId || !appSecret) return NextResponse.json({ error: "Privy server authentication is not configured." }, { status: 503 });
   try {
